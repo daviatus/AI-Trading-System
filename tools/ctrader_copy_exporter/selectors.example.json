@@ -1,0 +1,19 @@
+{
+  "_note": "Replace every selector with values verified in the authorized cTrader History UI. These are examples only, not asserted cTrader selectors.",
+  "history_container": "REPLACE_WITH_HISTORY_SCROLL_CONTAINER",
+  "rows": "REPLACE_WITH_VISIBLE_TRADE_ROW_SELECTOR",
+  "trade_id": "REPLACE_WITH_STABLE_VISIBLE_TRADE_ID_SELECTOR",
+  "timestamp": "REPLACE_WITH_VISIBLE_TRADE_TIMESTAMP_SELECTOR",
+  "start_date": "REPLACE_WITH_EXISTING_START_DATE_FILTER",
+  "end_date": "REPLACE_WITH_EXISTING_END_DATE_FILTER",
+  "apply_button": "REPLACE_WITH_EXISTING_FILTER_APPLY_CONTROL",
+  "loading": "OPTIONAL_REPLACE_WITH_HISTORY_LOADING_INDICATOR",
+  "date_format": "%Y-%m-%d",
+  "timestamp_format": null,
+  "fields": {
+    "symbol": "OPTIONAL_VISIBLE_SYMBOL_FIELD",
+    "side": "OPTIONAL_VISIBLE_SIDE_FIELD",
+    "volume": "OPTIONAL_VISIBLE_VOLUME_FIELD",
+    "price": "OPTIONAL_VISIBLE_PRICE_FIELD"
+  }
+}

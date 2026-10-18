@@ -1,0 +1,45 @@
+# Python virtual environment
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local data and databases
+/data/
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+*.backup
+
+# Logs
+*.log
+logs/
+
+# Python build
+*.egg-info/
+dist/
+build/
+
+# IDE and operating system
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Playwright browser sessions
+playwright/.auth/
+**/storage_state.json
+**/session_state.json
