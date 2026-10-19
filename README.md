@@ -114,7 +114,18 @@ Provider 5-minute observations and `aggregate_1m` output are stored under separa
 
 ### Parquet archives
 
-Bar Parquet files use versioned Arrow schema metadata and UTC timestamps; they are partitioned as `instrument=.../timeframe=.../year=.../month=.../part-000.parquet`. Monthly partitions are merged, deduplicated by timestamp/source, checksummed, and replaced atomically.
+Historical candles can be backfilled directly into versioned Parquet files with ZSTD compression. PostgreSQL remains the default for backward compatibility; existing PostgreSQL data is not migrated or deleted. Use `--storage parquet` explicitly for a new Parquet-backed backfill. PostgreSQL stores its instrument metadata and a backend-namespaced checkpoint, and only advances the checkpoint after the Parquet file is replaced.
+
+Files use UTC timestamps and are partitioned as `instrument=.../timeframe=.../year=.../month=.../part-000.parquet`. Monthly partitions are merged, deduplicated by timestamp/source and replaced atomically. Use a larger backfill batch (the Parquet CLI default is 50,000 candles to avoid repeatedly rewriting a monthly partition):
+
+```powershell
+python -m trading.data.cli backfill `
+  --storage parquet --data-root .\data\market\ohlcv `
+  --provider simulated --instrument WTI --timeframe 1m `
+  --start 2025-01-01T00:00:00Z --end 2025-02-01T00:00:00Z
+```
+
+Existing PostgreSQL candles can still be exported and imported non-destructively:
 
 ```powershell
 python -m trading.data.cli export-parquet `
@@ -127,6 +138,13 @@ python -m trading.data.cli import-parquet `
 ```
 
 Parquet import is idempotent against the same database source keys. Exported provenance travels with every row. Feature/target Parquet outputs are separate from the OHLCV archive.
+For optional predicate-pushed analytics over these files, install `python -m pip install -e ".[analytics]"` and use `DuckDBParquetAnalytics` from `trading.storage`; DuckDB creates no persistent copy. Feature datasets retain separate targets and include feature schema v2 metadata while remaining readable alongside existing Phase 2B schema v1 datasets. See [the storage architecture](./ai_trading_project_spec/ARCHITECTURE.md) for the typed access facade, SQLite trade schema and backup guidance.
+
+Benchmark representative local storage workloads (the default writes one million deterministic candles):
+
+```powershell
+python -m tools.storage_benchmark
+```
 
 ### ML dataset preparation (no training)
 

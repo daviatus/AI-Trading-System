@@ -1,5 +1,6 @@
 import asyncio
 import csv
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -388,3 +389,106 @@ def test_incremental_store_rebuilds_csv_and_deduplicates_across_intervals(tmp_pa
     except Exception:
         store.close()
         raise
+
+
+def test_structured_trade_fields_are_indexed_and_written_to_csv(tmp_path: Path) -> None:
+    store = ExportStore(tmp_path, "structured")
+    week = _week()
+    trade = {
+        "trade_id": "structured-id",
+        "opened_at_utc": week.start.astimezone(UTC).isoformat(),
+        "displayed_timestamp": week.start.isoformat(),
+        "ui_timezone": str(TZ),
+        "raw_fields": {
+            "symbol": "XAUUSD",
+            "side": "BUY",
+            "volume": "0.25",
+            "entry_price": "2700.125",
+            "exit_price": "2710.5",
+            "commission": "-1.2",
+            "swap_interest": "-0.04",
+            "net_profit": "2.1",
+            "account_balance": "10002.1",
+            "close_timestamp": "2026-10-12T04:00:00+01:00",
+            "custom_visible_field": "preserved",
+        },
+    }
+    try:
+        assert store.upsert_batch(week, [trade]) == (1, 0)
+        saved = store.get_trade("structured-id")
+        assert saved is not None
+        assert saved["symbol"] == "XAUUSD"
+        assert saved["direction"] == "BUY"
+        assert saved["quantity"] == "0.25"
+        assert saved["open_price"] == "2700.125"
+        assert saved["close_price"] == "2710.5"
+        assert saved["commission"] == "-1.2"
+        assert saved["swap"] == "-0.04"
+        assert saved["net_profit"] == "2.1"
+        assert saved["account_balance"] == "10002.1"
+        assert saved["raw_fields"]["custom_visible_field"] == "preserved"
+        assert [row["trade_id"] for row in store.iter_trades()] == ["structured-id"]
+        with store.csv_path.open(encoding="utf-8", newline="") as source:
+            row = next(csv.DictReader(source))
+        assert row["symbol"] == "XAUUSD"
+        assert row["account_balance"] == "10002.1"
+    finally:
+        store.close()
+
+
+def test_legacy_trade_database_is_migrated_without_losing_json_fields(tmp_path: Path) -> None:
+    database = tmp_path / "export.sqlite3"
+    connection = sqlite3.connect(database)
+    connection.execute(
+        """
+        CREATE TABLE trades (
+            run_id TEXT NOT NULL, trade_id TEXT NOT NULL, opened_at_utc TEXT NOT NULL,
+            displayed_timestamp TEXT NOT NULL, ui_timezone TEXT NOT NULL,
+            interval_id TEXT NOT NULL, raw_fields_json TEXT NOT NULL,
+            PRIMARY KEY (run_id, trade_id)
+        )
+        """
+    )
+    connection.execute(
+        "INSERT INTO trades VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            "legacy",
+            "legacy-id",
+            "2026-10-12T00:00:00+00:00",
+            "2026-10-12T01:00:00+01:00",
+            "Europe/London",
+            "week",
+            '{"symbol":"EURUSD","profit":"4.2","balance":"120.5"}',
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    store = ExportStore(tmp_path, "legacy")
+    try:
+        saved = store.get_trade("legacy-id")
+        assert saved is not None
+        assert saved["symbol"] == "EURUSD"
+        assert saved["net_profit"] == "4.2"
+        assert saved["account_balance"] == "120.5"
+        assert saved["raw_fields"]["profit"] == "4.2"
+    finally:
+        store.close()
+
+
+def test_csv_projection_can_be_disabled_without_disabling_sqlite_storage(tmp_path: Path) -> None:
+    store = ExportStore(tmp_path, "sqlite-only", csv_enabled=False)
+    week = _week()
+    trade = {
+        "trade_id": "sqlite-only-id",
+        "opened_at_utc": week.start.astimezone(UTC).isoformat(),
+        "displayed_timestamp": week.start.isoformat(),
+        "ui_timezone": str(TZ),
+        "raw_fields": {"symbol": "WTI"},
+    }
+    try:
+        assert store.upsert_batch(week, [trade]) == (1, 0)
+        assert store.get_trade("sqlite-only-id")["symbol"] == "WTI"
+        assert not store.csv_path.exists()
+    finally:
+        store.close()

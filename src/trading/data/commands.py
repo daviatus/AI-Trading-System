@@ -16,8 +16,9 @@ from trading.data.market_calendar import MarketCalendar
 from trading.data.parquet_io import export_months, import_parquet_directory
 from trading.data.providers import CsvMarketDataProvider, SimulatedMarketDataProvider
 from trading.data.quality import check_candle_quality
-from trading.data.repository import PostgresMarketDataRepository
+from trading.data.repository import MarketDataRepository, PostgresMarketDataRepository
 from trading.db import get_engine
+from trading.storage.parquet import ParquetMarketDataRepository
 
 COMMANDS = {"backfill", "quality", "aggregate", "export-parquet", "import-parquet", "dataset"}
 
@@ -79,7 +80,11 @@ def _build_parser(command: str) -> argparse.ArgumentParser:
         parser.add_argument("--provider", choices=["csv", "simulated"], default="simulated")
         parser.add_argument("--csv")
         parser.add_argument("--seed", type=int, default=0)
-        parser.add_argument("--batch-size", type=int, default=500)
+        parser.add_argument(
+            "--batch-size",
+            type=int,
+            help="Default: 500 for PostgreSQL, 50000 for monthly Parquet writes",
+        )
         parser.add_argument("--retries", type=int, default=3)
     elif command == "quality":
         parser.add_argument("--source-provider")
@@ -112,24 +117,38 @@ def _build_parser(command: str) -> argparse.ArgumentParser:
         parser.add_argument("--validation-fraction", type=float, default=0.15)
         parser.add_argument("--purge-gap", type=int)
         parser.add_argument("--embargo", type=int, default=0)
+    if command in {"backfill", "quality", "aggregate", "dataset"}:
+        parser.add_argument(
+            "--storage",
+            choices=["postgres", "parquet"],
+            default="postgres",
+            help="Candle backend; PostgreSQL remains the default",
+        )
+        parser.add_argument("--data-root", default="data/market/ohlcv")
     return parser
 
 
 def _execute(arguments: argparse.Namespace) -> None:
-    repository = PostgresMarketDataRepository(get_engine())
+    postgres_repository = PostgresMarketDataRepository(get_engine())
     settings = get_settings()
     if arguments.command == "import-parquet":
         inserted = import_parquet_directory(
-            repository,
+            postgres_repository,
             arguments.input,
             batch_size=arguments.batch_size,
         )
         print(json.dumps({"inserted": inserted}, indent=2))
         return
+    repository: MarketDataRepository = postgres_repository
+    if getattr(arguments, "storage", "postgres") == "parquet":
+        repository = ParquetMarketDataRepository(arguments.data_root, postgres_repository)
 
     instrument = InstrumentCode(arguments.instrument)
     timeframe = Timeframe(arguments.timeframe)
     if arguments.command == "backfill":
+        batch_size = arguments.batch_size
+        if batch_size is None:
+            batch_size = 50_000 if isinstance(repository, ParquetMarketDataRepository) else 500
         if arguments.provider == "csv":
             if not arguments.csv:
                 raise SystemExit("--csv is required when --provider=csv")
@@ -147,7 +166,7 @@ def _execute(arguments: argparse.Namespace) -> None:
                 timeframe,
                 arguments.start,
                 arguments.end,
-                batch_size=arguments.batch_size,
+                batch_size=batch_size,
                 retries=arguments.retries,
             )
         )

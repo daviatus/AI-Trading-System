@@ -45,6 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Operator-validated visible UI selector JSON",
     )
     dry_run.add_argument("--output", type=Path, default=Path("data/ctrader_copy_export"))
+    dry_run.add_argument("--no-csv", action="store_true", help="Do not create a CSV projection")
     dry_run.add_argument("--profile", type=Path, default=Path("data/ctrader-browser-profile"))
     dry_run.add_argument("--account-label", default="authorized-account")
     dry_run.add_argument("--run-id", help="Reuse to resume this same dry-run checkpoint")
@@ -89,6 +90,7 @@ async def run_dry_run(args: argparse.Namespace) -> dict:
             for item in weekly_intervals(args.start, args.end, timezone)
         ],
         "unique_limit": 20,
+        "csv_enabled": not args.no_csv,
         "weekly_trade_threshold": args.weekly_trade_threshold,
         "reset_threshold": args.reset_threshold,
         "selector_fingerprint": hashlib.sha256(args.selectors.read_bytes()).hexdigest(),
@@ -98,7 +100,7 @@ async def run_dry_run(args: argparse.Namespace) -> dict:
     if re.fullmatch(r"[A-Za-z0-9_-]{1,80}", run_id) is None:
         raise ValueError("--run-id may contain only letters, digits, hyphens, and underscores")
     output_dir = args.output / run_id
-    store = ExportStore(output_dir, run_id)
+    store = ExportStore(output_dir, run_id, csv_enabled=not args.no_csv)
     previous = store.manifest()
     previous_request = previous.get("request", previous) if previous else None
     if previous_request and previous_request != request:

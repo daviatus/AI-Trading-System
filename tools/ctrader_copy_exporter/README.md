@@ -85,6 +85,14 @@ pass the same explicit `--run-id` if you need a stable custom checkpoint. Dry
 run data has a separate output namespace and cannot complete a full-export
 checkpoint.
 
+SQLite is the primary store. Common structured fields (symbol, direction,
+quantity, open/close prices and times, commission, swap, net profit, and
+account balance) are indexed as nullable text columns; all other visible row
+fields remain in `raw_fields_json`. Existing SQLite files receive additive
+columns and retain their trade rows and checkpoints. To keep only SQLite and
+skip the CSV projection, pass `--no-csv`; CSV remains enabled by default for
+backward compatibility.
+
 The summary reports interval status, unique/duplicate IDs, refresh resets,
 verification, and output paths. Reaching 20 before the bottom is verified
 leaves the interval incomplete. A dry run is only validated if the bottom and

@@ -13,6 +13,7 @@ import pandas as pd
 from trading.data.domain import Candle, InstrumentCode, Timeframe
 
 DATASET_SCHEMA_VERSION = "1"
+FEATURE_SCHEMA_VERSION = "2"
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,7 @@ class DatasetSplits:
 @dataclass(frozen=True)
 class DatasetManifest:
     schema_version: str
+    feature_schema_version: str
     source: str
     source_fingerprint: str
     instrument: str
@@ -96,12 +98,26 @@ class PreparedDataset:
         temporary_targets = output / f".targets.{uuid.uuid4().hex}.tmp"
         try:
             pq.write_table(
-                pd_to_arrow_table(self.features, "features"),
+                pd_to_arrow_table(
+                    self.features,
+                    "features",
+                    instrument=self.manifest.instrument,
+                    timeframe_minutes=self.manifest.timeframe_minutes,
+                    configuration=self.manifest.configuration,
+                    dataset_fingerprint=self.manifest.dataset_fingerprint,
+                ),
                 temporary_features,
                 compression="zstd",
             )
             pq.write_table(
-                pd_to_arrow_table(self.targets, "targets"),
+                pd_to_arrow_table(
+                    self.targets,
+                    "targets",
+                    instrument=self.manifest.instrument,
+                    timeframe_minutes=self.manifest.timeframe_minutes,
+                    configuration=self.manifest.configuration,
+                    dataset_fingerprint=self.manifest.dataset_fingerprint,
+                ),
                 temporary_targets,
                 compression="zstd",
             )
@@ -164,6 +180,7 @@ def build_ml_dataset(
     dataset_fingerprint = _dataset_fingerprint(features, targets, input_fingerprint, config)
     manifest = DatasetManifest(
         schema_version=DATASET_SCHEMA_VERSION,
+        feature_schema_version=FEATURE_SCHEMA_VERSION,
         source=source,
         source_fingerprint=input_fingerprint,
         instrument=instrument.value,
@@ -436,11 +453,33 @@ def _json_default(value: Any) -> Any:
     raise TypeError(f"Not JSON serializable: {type(value).__name__}")
 
 
-def pd_to_arrow_table(frame: pd.DataFrame, table_name: str):
+def pd_to_arrow_table(
+    frame: pd.DataFrame,
+    table_name: str,
+    *,
+    instrument: str | None = None,
+    timeframe_minutes: int | None = None,
+    configuration: dict[str, Any] | None = None,
+    dataset_fingerprint: str | None = None,
+):
     import pyarrow as pa
 
     table = pa.Table.from_pandas(frame, preserve_index=True)
     metadata = dict(table.schema.metadata or {})
     metadata[b"trading.dataset_schema_version"] = DATASET_SCHEMA_VERSION.encode()
     metadata[b"trading.dataset_table"] = table_name.encode()
+    if table_name == "features":
+        metadata[b"trading.feature_schema_version"] = FEATURE_SCHEMA_VERSION.encode()
+    if instrument is not None:
+        metadata[b"trading.instrument"] = instrument.encode()
+    if timeframe_minutes is not None:
+        metadata[b"trading.timeframe_minutes"] = str(timeframe_minutes).encode()
+    if configuration is not None:
+        metadata[b"trading.feature_configuration"] = json.dumps(
+            configuration,
+            sort_keys=True,
+            default=_json_default,
+        ).encode()
+    if dataset_fingerprint is not None:
+        metadata[b"trading.dataset_fingerprint"] = dataset_fingerprint.encode()
     return table.replace_schema_metadata(metadata)

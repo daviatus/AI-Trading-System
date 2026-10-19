@@ -30,6 +30,9 @@ dev = [
 ctrader-export = [
     "playwright>=1.50,<2",
 ]
+analytics = [
+    "duckdb>=1.2,<2",
+]
 
 [project.scripts]
 ctrader-copy-exporter = "tools.ctrader_copy_exporter.cli:main"

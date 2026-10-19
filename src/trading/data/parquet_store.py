@@ -79,7 +79,7 @@ def export_partition(
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
         try:
-            pq.write_table(table, temporary, compression="zstd")
+            pq.write_table(table, temporary, compression="zstd", row_group_size=4096)
             os.replace(temporary, path)
         finally:
             if temporary.exists():
@@ -98,7 +98,15 @@ def read_parquet(
     *,
     include_lineage: bool = False,
     batch_size: int = 4096,
+    start: datetime | None = None,
+    end: datetime | None = None,
 ) -> Iterator[Candle] | Iterator[tuple[Candle, str, str]]:
+    if start is not None and (start.tzinfo is None or start.utcoffset() is None):
+        raise ValueError("Parquet read start must be timezone-aware")
+    if end is not None and (end.tzinfo is None or end.utcoffset() is None):
+        raise ValueError("Parquet read end must be timezone-aware")
+    if start is not None and end is not None and start >= end:
+        raise ValueError("Parquet read start must be earlier than end")
     parquet_file = pq.ParquetFile(path)
     metadata = parquet_file.schema_arrow.metadata or {}
     if metadata.get(b"trading.schema_version") != PARQUET_SCHEMA_VERSION.encode():
@@ -107,7 +115,23 @@ def read_parquet(
         raise ParquetSchemaError(
             f"Parquet schema does not match version {PARQUET_SCHEMA_VERSION}: {path}"
         )
-    for batch in parquet_file.iter_batches(batch_size=batch_size):
+    row_groups = None
+    if start is not None or end is not None:
+        timestamp_column = parquet_file.schema_arrow.get_field_index("opened_at")
+        selected_groups = []
+        for index in range(parquet_file.metadata.num_row_groups):
+            statistics = parquet_file.metadata.row_group(index).column(timestamp_column).statistics
+            if statistics is not None and statistics.has_min_max:
+                minimum = statistics.min
+                maximum = statistics.max
+                if start is not None and maximum < start.astimezone(UTC):
+                    continue
+                if end is not None and minimum >= end.astimezone(UTC):
+                    continue
+            selected_groups.append(index)
+        row_groups = selected_groups
+
+    for batch in parquet_file.iter_batches(batch_size=batch_size, row_groups=row_groups):
         columns = batch.to_pydict()
         for index in range(batch.num_rows):
             candle = Candle(

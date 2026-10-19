@@ -15,6 +15,14 @@ __pycache__/
 !.env.example
 *.pem
 *.key
+*.p12
+*.pfx
+*.token
+*.secret
+**/broker-token.json
+**/ctrader-token.json
+**/broker-auth.json
+**/ctrader-auth.json
 
 # Local data and databases
 /data/
@@ -23,6 +31,10 @@ __pycache__/
 *.sqlite3
 *.dump
 *.backup
+*.parquet
+*.duckdb
+*.tmp
+.duckdb/
 
 # Logs
 *.log
@@ -43,3 +55,7 @@ Thumbs.db
 playwright/.auth/
 **/storage_state.json
 **/session_state.json
+**/playwright-profile/
+**/browser-profile/
+**/ctrader-browser-profile/
+**/ctrader-copy-profile/

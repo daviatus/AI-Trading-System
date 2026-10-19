@@ -153,7 +153,7 @@ class DryRunExporter:
             "refresh_events": sum(result.refresh_count for result in results),
             "interval_results": [result.__dict__ for result in results],
             "checkpoints": checkpoints,
-            "csv_path": str(self.store.csv_path),
+            "csv_path": str(self.store.csv_path) if self.store.csv_enabled else None,
             "checkpoint_path": str(self.store.database_path),
             "warnings": [result.reason for result in results if result.reason is not None],
         }
