@@ -28,6 +28,7 @@ def aggregate_complete_minutes(
     finalized_through: datetime,
     *,
     calendar: MarketCalendar | None = None,
+    source_provider: str | None = None,
 ) -> AggregationResult:
     if finalized_through.tzinfo is None or finalized_through.utcoffset() is None:
         raise ValueError("finalized_through must be timezone-aware")
@@ -67,7 +68,17 @@ def aggregate_complete_minutes(
                 high=max(candle.high for candle in minute_bars),
                 low=min(candle.low for candle in minute_bars),
                 close=minute_bars[-1].close,
-                volume=sum((candle.volume for candle in minute_bars), Decimal(0)),
+                volume=(
+                    sum((candle.volume for candle in minute_bars), Decimal(0))
+                    if all(candle.volume is not None for candle in minute_bars)
+                    else None
+                ),
+                price_type=minute_bars[0].price_type,
+                quality_metadata={
+                    "derived_from": "1m",
+                    "source_provider": source_provider,
+                    "source_price_type": minute_bars[0].price_type.value,
+                },
             )
         )
 
@@ -78,6 +89,8 @@ def aggregate_complete_minutes(
             instrument = candle.instrument
         elif candle.instrument != instrument:
             raise ValueError("Aggregation input must contain only one instrument")
+        elif previous_candle is not None and candle.price_type != previous_candle.price_type:
+            raise ValueError("Aggregation input must contain only one price type")
         if previous_timestamp is not None and candle.opened_at <= previous_timestamp:
             if candle.opened_at < previous_timestamp:
                 raise ValueError("1-minute aggregation input must be strictly chronological")
@@ -128,13 +141,16 @@ def compare_aggregated_source(
             raise ValueError("Cannot reconcile candles for different instruments")
         if derived_candle.timeframe != provider_candle.timeframe:
             raise ValueError("Cannot reconcile candles with different timeframes")
+        if provider_candle.price_type != derived_candle.price_type:
+            raise ValueError("Cannot reconcile candles with different price types")
         values = {
             "open": (derived_candle.open, provider_candle.open),
             "high": (derived_candle.high, provider_candle.high),
             "low": (derived_candle.low, provider_candle.low),
             "close": (derived_candle.close, provider_candle.close),
-            "volume": (derived_candle.volume, provider_candle.volume),
         }
+        if derived_candle.volume is not None and provider_candle.volume is not None:
+            values["volume"] = (derived_candle.volume, provider_candle.volume)
         differences = {
             name: abs(derived_value - provider_value)
             for name, (derived_value, provider_value) in values.items()

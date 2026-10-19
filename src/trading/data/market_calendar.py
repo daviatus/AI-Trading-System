@@ -44,7 +44,7 @@ class MarketSchedule:
         local_time = local.timetz().replace(tzinfo=None)
         previous_date = local.date() - timedelta(days=1)
         for start, end in self.sessions:
-            if end < start:
+            if end <= start:
                 if local.weekday() in self.weekdays and local_time >= start:
                     return True
                 if previous_date.weekday() in self.weekdays and local_time < end:
@@ -56,7 +56,29 @@ class MarketSchedule:
 
 class MarketCalendar:
     def __init__(self, schedules: dict[InstrumentCode, MarketSchedule] | None = None) -> None:
-        defaults = {instrument: MarketSchedule.default_weekdays() for instrument in InstrumentCode}
+        new_york = ZoneInfo("America/New_York")
+        defaults = {
+            InstrumentCode.EURUSD: MarketSchedule(
+                timezone=new_york,
+                weekdays=frozenset({0, 1, 2, 3, 6}),
+                sessions=((time(17), time(17)),),
+            ),
+            InstrumentCode.XAUUSD: MarketSchedule(
+                timezone=new_york,
+                weekdays=frozenset({0, 1, 2, 3, 6}),
+                sessions=((time(18), time(17)),),
+            ),
+            InstrumentCode.WTI: MarketSchedule(
+                timezone=new_york,
+                weekdays=frozenset({0, 1, 2, 3, 6}),
+                sessions=((time(18), time(17)),),
+            ),
+            InstrumentCode.SPX500: MarketSchedule(
+                timezone=new_york,
+                weekdays=frozenset({0, 1, 2, 3, 4}),
+                sessions=((time(9, 30), time(16)),),
+            ),
+        }
         if schedules:
             defaults.update(schedules)
         self.schedules = defaults

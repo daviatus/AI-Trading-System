@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import IntEnum, StrEnum
-from typing import Self
+from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -29,6 +29,14 @@ class Timeframe(IntEnum):
     @property
     def label(self) -> str:
         return f"{self.value}m"
+
+
+class PriceType(StrEnum):
+    BID = "bid"
+    ASK = "ask"
+    MID = "mid"
+    LAST = "last"
+    UNKNOWN = "unknown"
 
 
 class Instrument(BaseModel):
@@ -72,7 +80,9 @@ class Candle(BaseModel):
     high: Decimal
     low: Decimal
     close: Decimal
-    volume: Decimal
+    volume: Decimal | None = None
+    price_type: PriceType = PriceType.UNKNOWN
+    quality_metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("opened_at")
     @classmethod
@@ -81,11 +91,18 @@ class Candle(BaseModel):
             raise ValueError("Candle timestamps must include a timezone")
         return value.astimezone(UTC)
 
-    @field_validator("open", "high", "low", "close", "volume")
+    @field_validator("open", "high", "low", "close")
     @classmethod
     def validate_finite_values(cls, value: Decimal) -> Decimal:
         if not value.is_finite():
             raise ValueError("Candle values must be finite")
+        return value
+
+    @field_validator("volume")
+    @classmethod
+    def validate_volume(cls, value: Decimal | None) -> Decimal | None:
+        if value is not None and not value.is_finite():
+            raise ValueError("Candle volume must be finite")
         return value
 
     @model_validator(mode="after")
@@ -94,7 +111,7 @@ class Candle(BaseModel):
             raise ValueError("Candle timestamps must be aligned to whole minutes")
         if self.opened_at.minute % self.timeframe.value:
             raise ValueError(f"Candle timestamp must align to {self.timeframe.label}")
-        if self.volume < 0:
+        if self.volume is not None and self.volume < 0:
             raise ValueError("Candle volume cannot be negative")
         if any(value < 0 for value in (self.open, self.high, self.low, self.close)):
             raise ValueError("Candle prices cannot be negative")

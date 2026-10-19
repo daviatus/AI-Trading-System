@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import uuid
 from collections import defaultdict
@@ -10,10 +11,31 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from trading.data.domain import Candle, InstrumentCode, Timeframe
+from trading.data.domain import Candle, InstrumentCode, PriceType, Timeframe
 
-PARQUET_SCHEMA_VERSION = "1"
+PARQUET_SCHEMA_VERSION = "2"
 PARQUET_SCHEMA = pa.schema(
+    [
+        pa.field("instrument", pa.string(), nullable=False),
+        pa.field("timeframe_minutes", pa.int16(), nullable=False),
+        pa.field("opened_at", pa.timestamp("us", tz="UTC"), nullable=False),
+        pa.field("open", pa.decimal128(20, 8), nullable=False),
+        pa.field("high", pa.decimal128(20, 8), nullable=False),
+        pa.field("low", pa.decimal128(20, 8), nullable=False),
+        pa.field("close", pa.decimal128(20, 8), nullable=False),
+        pa.field("volume", pa.decimal128(24, 8), nullable=True),
+        pa.field("source_provider", pa.string(), nullable=False),
+        pa.field("source_reference", pa.string(), nullable=False),
+        pa.field("price_type", pa.string(), nullable=False),
+        pa.field("quality_metadata_json", pa.string(), nullable=False),
+    ],
+    metadata={
+        b"trading.schema_name": b"ohlcv_candles",
+        b"trading.schema_version": PARQUET_SCHEMA_VERSION.encode(),
+        b"trading.timestamp_semantics": b"candle_open_utc",
+    },
+)
+_LEGACY_PARQUET_SCHEMA = pa.schema(
     [
         pa.field("instrument", pa.string(), nullable=False),
         pa.field("timeframe_minutes", pa.int16(), nullable=False),
@@ -28,7 +50,7 @@ PARQUET_SCHEMA = pa.schema(
     ],
     metadata={
         b"trading.schema_name": b"ohlcv_candles",
-        b"trading.schema_version": PARQUET_SCHEMA_VERSION.encode(),
+        b"trading.schema_version": b"1",
         b"trading.timestamp_semantics": b"candle_open_utc",
     },
 )
@@ -54,10 +76,13 @@ def export_partition(
     root: str | Path,
 ) -> list[tuple[Path, str]]:
     root = Path(root)
-    grouped: dict[Path, dict[tuple[datetime, str], tuple[Candle, str]]] = defaultdict(dict)
+    grouped: dict[
+        Path,
+        dict[tuple[datetime, str, str], tuple[Candle, str]],
+    ] = defaultdict(dict)
     for candle, provider, reference in candles:
         path = partition_path(root, candle)
-        key = (candle.opened_at, provider)
+        key = (candle.opened_at, provider, candle.price_type.value)
         existing = grouped[path].get(key)
         current = (candle, reference)
         if existing is not None and existing != current:
@@ -68,7 +93,7 @@ def export_partition(
     for path, records in sorted(grouped.items(), key=lambda item: str(item[0])):
         if path.exists():
             for prior in read_parquet(path, include_lineage=True):
-                key = (prior[0].opened_at, prior[1])
+                key = (prior[0].opened_at, prior[1], prior[0].price_type.value)
                 current = (prior[0], prior[2])
                 existing = records.get(key)
                 if existing is not None and existing != current:
@@ -109,11 +134,13 @@ def read_parquet(
         raise ValueError("Parquet read start must be earlier than end")
     parquet_file = pq.ParquetFile(path)
     metadata = parquet_file.schema_arrow.metadata or {}
-    if metadata.get(b"trading.schema_version") != PARQUET_SCHEMA_VERSION.encode():
+    schema_version = metadata.get(b"trading.schema_version")
+    if schema_version not in {b"1", PARQUET_SCHEMA_VERSION.encode()}:
         raise ParquetSchemaError(f"Unsupported Parquet schema version: {path}")
-    if not parquet_file.schema_arrow.equals(PARQUET_SCHEMA, check_metadata=True):
+    expected_schema = PARQUET_SCHEMA if schema_version == b"2" else _LEGACY_PARQUET_SCHEMA
+    if not parquet_file.schema_arrow.equals(expected_schema, check_metadata=True):
         raise ParquetSchemaError(
-            f"Parquet schema does not match version {PARQUET_SCHEMA_VERSION}: {path}"
+            f"Parquet schema does not match version {schema_version.decode()}: {path}"
         )
     row_groups = None
     if start is not None or end is not None:
@@ -143,6 +170,16 @@ def read_parquet(
                 low=columns["low"][index],
                 close=columns["close"][index],
                 volume=columns["volume"][index],
+                price_type=(
+                    PriceType(columns["price_type"][index])
+                    if "price_type" in columns
+                    else PriceType.UNKNOWN
+                ),
+                quality_metadata=(
+                    json.loads(columns["quality_metadata_json"][index])
+                    if "quality_metadata_json" in columns
+                    else {}
+                ),
             )
             if include_lineage:
                 yield (
@@ -172,9 +209,16 @@ def _table_from_records(records: list[tuple[Candle, str, str]]) -> pa.Table:
             "high": _quantize(candle.high, 20),
             "low": _quantize(candle.low, 20),
             "close": _quantize(candle.close, 20),
-            "volume": _quantize(candle.volume, 24),
+            "volume": _quantize(candle.volume, 24) if candle.volume is not None else None,
             "source_provider": provider,
             "source_reference": reference,
+            "price_type": candle.price_type.value,
+            "quality_metadata_json": json.dumps(
+                candle.quality_metadata,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=_json_default,
+            ),
         }
         for candle, provider, reference in records
     ]
@@ -186,3 +230,9 @@ def _quantize(value: Decimal, precision: int) -> Decimal:
     if len(quantized.as_tuple().digits) > precision:
         raise ValueError(f"Value {value} exceeds Parquet decimal precision {precision}")
     return quantized
+
+
+def _json_default(value: object) -> str:
+    if isinstance(value, (Decimal, datetime)):
+        return str(value)
+    raise TypeError(f"Not JSON serializable: {type(value).__name__}")

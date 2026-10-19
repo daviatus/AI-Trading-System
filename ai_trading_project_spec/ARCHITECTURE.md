@@ -4,7 +4,7 @@
 
 | Data | Primary store | Current implementation and compatibility |
 | --- | --- | --- |
-| Historical OHLCV | Partitioned Parquet + ZSTD | Versioned schema 1, UTC candle-open timestamps, Decimal price/volume fields, deterministic monthly partitions and atomic replacement. New backfills can opt into this repository. Existing PostgreSQL candle data is retained and remains the default for current consumers. |
+| Historical OHLCV | Partitioned Parquet + ZSTD | Versioned schema 2 supports UTC candle-open timestamps, Decimal OHLC, optional volume, price type, quality metadata and provider provenance. Deterministic monthly partitions and atomic replacement remain; schema 1 is still readable. New backfills can opt into this repository. Existing PostgreSQL candle data is retained and remains the default for current consumers. |
 | Feature and target datasets | Separate Parquet files + manifest | Causal feature definitions and chronological purge/embargo splits remain in `trading.data.dataset`. Features and targets are stored separately, with ZSTD, version/configuration/instrument/timeframe/fingerprint metadata, and selected-column reads. |
 | cTrader Copy trade history | SQLite | `export.sqlite3` is authoritative for trades, run manifests, checksummed batches and weekly/daily checkpoints. Trade IDs are unique per export run. Structured common fields are additive columns; all UI fields remain in the original JSON payload. CSV is an optional, atomically rebuilt projection. |
 | Operational and relational state | PostgreSQL | Keep instruments, ingestion checkpoints, system events and future orders/positions/model metadata here. Reuse existing SQLAlchemy models and Alembic history; do not create equivalent tables or migrate existing candles implicitly. |
@@ -23,7 +23,7 @@ explicitly selects `--storage parquet`.
 ## Data flow
 
 ```text
-CSV / simulated provider
+CSV / simulated / local HistData ASCII provider
         |
         v
 backfill -> validation / gap reporting -> PostgreSQL (existing default)
@@ -40,6 +40,15 @@ authorized cTrader History UI -> incremental SQLite trade/checkpoint store
 
 PostgreSQL -> instruments, checkpoints, events and operational relational state
 ```
+
+The HistData provider reads local Generic ASCII M1 files only. Its source ID
+and import jobs (file checksum, mapping, requested/observed coverage, and
+quality summary) are recorded in PostgreSQL. Its source metadata declares a
+fixed UTC-05:00 offset; timestamps are not adjusted for daylight saving time.
+Each source/provider and price type is a distinct candle series, so future
+Pepperstone comparisons cannot overwrite HistData observations. The configured
+mapping is in `config/historical_data_sources.json`. Real archive symbol/file
+codes still require validation against downloaded sample files.
 
 Parquet exports of existing PostgreSQL candles remain supported by
 `export-parquet`; `import-parquet` remains a non-destructive, idempotent import
@@ -79,9 +88,13 @@ outside source control.
 
 ## Schema and timestamp conventions
 
-- Candle schema version `1` is defined in `trading.data.parquet_store`.
+- Candle schema version `2` is defined in `trading.data.parquet_store`;
+  readers remain compatible with schema version `1`.
   `opened_at` is a microsecond-resolution UTC timestamp marking candle open.
-  OHLCV uses `decimal128(20, 8)` prices and `decimal128(24, 8)` volume.
+  OHLC uses `decimal128(20, 8)` prices; optional volume uses
+  `decimal128(24, 8)`. `source_provider` identifies the independent source,
+  `instrument` is the canonical instrument ID, `price_type` separates bid,
+  ask, mid and unknown series, and quality metadata is retained per candle.
   Partitions are `instrument`, `timeframe`, calendar `year`, and `month`.
 - Candle files use ZSTD compression, schema metadata, stable ordering, and
   source-provider/source-reference provenance. Duplicate keys are ignored only
@@ -101,8 +114,9 @@ outside source control.
   timestamp and UI timezone. Numeric trade values are stored as text to avoid
   floating-point loss; raw UI fields are preserved in JSON. Common structured
   fields are nullable so legacy and sparse rows remain valid.
-- PostgreSQL stores timezone-aware timestamps and `NUMERIC` OHLCV. No schema
-  migration is needed for this storage layer.
+- PostgreSQL stores timezone-aware timestamps and `NUMERIC` OHLCV. Migration
+  0005 adds optional volume, price-type and quality metadata plus source/import
+  job tracking for historical imports.
 
 ## Storage and access setup
 

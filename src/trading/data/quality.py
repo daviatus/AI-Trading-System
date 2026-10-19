@@ -33,8 +33,11 @@ class CandleQualityReport:
     duplicate_count: int
     out_of_order_count: int
     zero_volume_count: int
+    missing_volume_count: int
     gaps: tuple[GapFinding, ...]
     issues: tuple[QualityIssue, ...]
+    coverage_start: datetime | None = None
+    coverage_end: datetime | None = None
 
     @property
     def missing_candle_count(self) -> int:
@@ -51,7 +54,10 @@ class CandleQualityReport:
             "candle_count": self.candle_count,
             "duplicate_count": self.duplicate_count,
             "out_of_order_count": self.out_of_order_count,
+            "coverage_start": self.coverage_start.isoformat() if self.coverage_start else None,
+            "coverage_end": self.coverage_end.isoformat() if self.coverage_end else None,
             "zero_volume_count": self.zero_volume_count,
+            "missing_volume_count": self.missing_volume_count,
             "missing_candle_count": self.missing_candle_count,
             "unexpected_gap_count": self.unexpected_gap_count,
             "gaps": [asdict(gap) for gap in self.gaps],
@@ -67,7 +73,7 @@ class CandleObservation(Protocol):
     high: Decimal
     low: Decimal
     close: Decimal
-    volume: Decimal
+    volume: Decimal | None
 
 
 def check_candle_quality(
@@ -98,6 +104,7 @@ def check_candle_quality(
     duplicate_count = 0
     out_of_order_count = 0
     zero_volume_count = 0
+    missing_volume_count = 0
     zero_volume_run = 0
     first_timestamp: datetime | None = None
     last_timestamp: datetime | None = None
@@ -205,10 +212,12 @@ def check_candle_quality(
             issues.append(
                 QualityIssue("negative_price", candle.opened_at, "Price is negative", "error")
             )
-        if candle.volume < 0:
+        if candle.volume is not None and candle.volume < 0:
             issues.append(
                 QualityIssue("negative_volume", candle.opened_at, "Volume is negative", "error")
             )
+        elif candle.volume is None:
+            missing_volume_count += 1
         if (
             candle.high < candle.low
             or candle.high < candle.open
@@ -299,6 +308,9 @@ def check_candle_quality(
         duplicate_count=duplicate_count,
         out_of_order_count=out_of_order_count,
         zero_volume_count=zero_volume_count,
+        missing_volume_count=missing_volume_count,
         gaps=tuple(gaps),
         issues=tuple(issues),
+        coverage_start=first_timestamp,
+        coverage_end=last_timestamp,
     )

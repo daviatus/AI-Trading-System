@@ -11,7 +11,7 @@ from sqlalchemy import create_engine
 from tools.ctrader_copy_exporter.schedule import require_single_week
 from tools.ctrader_copy_exporter.store import ExportStore
 from trading.data.dataset import FeatureConfig, build_ml_dataset
-from trading.data.domain import Candle, Instrument, InstrumentCode, Timeframe
+from trading.data.domain import Candle, Instrument, InstrumentCode, PriceType, Timeframe
 from trading.data.ingestion import ingest_historical
 from trading.data.parquet_store import export_partition, read_parquet
 from trading.data.providers import SimulatedMarketDataProvider
@@ -185,6 +185,64 @@ def test_parquet_repository_rejects_conflicts_without_advancing_checkpoint(tmp_p
             instant + timedelta(minutes=1),
         )
     assert recorder.last_checkpoint == instant
+
+
+def test_derived_m5_parquet_replay_is_idempotent_and_conflicts_are_rejected(tmp_path) -> None:
+    recorder = CheckpointRecorder()
+    repository = ParquetMarketDataRepository(tmp_path, recorder)
+    instant = datetime(2025, 1, 6, 12, 0, tzinfo=UTC)
+    instrument = Instrument(symbol=InstrumentCode.WTI, display_name="WTI")
+    derived = Candle(
+        instrument=InstrumentCode.WTI,
+        timeframe=Timeframe.M5,
+        opened_at=instant,
+        open=Decimal("75"),
+        high=Decimal("76"),
+        low=Decimal("74"),
+        close=Decimal("75.5"),
+        volume=None,
+        price_type=PriceType.BID,
+        quality_metadata={"derived_from": "1m", "source_provider": "histdata"},
+    )
+    reference = "derived-from-1m:histdata"
+
+    assert (
+        repository.persist_batch(
+            instrument, Timeframe.M5, "aggregate_1m", "source-key", reference, [derived], instant
+        )
+        == 1
+    )
+    assert (
+        repository.persist_batch(
+            instrument, Timeframe.M5, "aggregate_1m", "source-key", reference, [derived], instant
+        )
+        == 0
+    )
+
+    conflicting = derived.model_copy(update={"high": Decimal("77")})
+    with pytest.raises(ValueError, match="Conflicting export candle"):
+        repository.persist_batch(
+            instrument,
+            Timeframe.M5,
+            "aggregate_1m",
+            "source-key",
+            reference,
+            [conflicting],
+            instant + timedelta(minutes=5),
+        )
+
+    restored = list(
+        repository.iter_candle_records(
+            InstrumentCode.WTI,
+            Timeframe.M5,
+            instant,
+            instant + timedelta(minutes=5),
+            source_provider="aggregate_1m",
+        )
+    )
+    assert len(restored) == 1
+    assert restored[0][0] == derived
+    assert restored[0][2] == reference
 
 
 def test_historical_backfill_runs_directly_against_parquet_and_resumes(tmp_path) -> None:

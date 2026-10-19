@@ -8,6 +8,11 @@ from trading.data.parquet_store import export_partition, read_parquet
 from trading.data.repository import MarketDataRepository
 
 
+def parquet_checkpoint_key(root: str | Path, source_key: str) -> str:
+    prefix = hashlib.sha256(str(Path(root).resolve()).casefold().encode("utf-8")).hexdigest()[:16]
+    return f"parquet:{prefix}:{source_key}"
+
+
 class ParquetMarketDataRepository:
     """Monthly, atomic Parquet candle storage with PostgreSQL checkpoints."""
 
@@ -42,18 +47,18 @@ class ParquetMarketDataRepository:
         candles: list[Candle],
         checkpoint: datetime | None,
     ) -> int:
-        identities: set[tuple[datetime, str]] = set()
+        identities: set[tuple[datetime, str, str]] = set()
         for candle in candles:
             if candle.instrument != instrument.symbol or candle.timeframe != timeframe:
                 raise ValueError("Parquet batch contains an unexpected instrument or timeframe")
-            identities.add((candle.opened_at, provider))
+            identities.add((candle.opened_at, provider, candle.price_type.value))
 
-        prior_identities: set[tuple[datetime, str]] = set()
+        prior_identities: set[tuple[datetime, str, str]] = set()
         if candles:
             for path in _partition_files(self.root, instrument.symbol, timeframe, candles):
                 if path.exists():
                     prior_identities.update(
-                        (record.opened_at, record_provider)
+                        (record.opened_at, record_provider, record.price_type.value)
                         for record, record_provider, _ in read_parquet(
                             path,
                             include_lineage=True,
@@ -78,7 +83,7 @@ class ParquetMarketDataRepository:
         return inserted
 
     def _checkpoint_key(self, source_key: str) -> str:
-        key = f"parquet:{self._checkpoint_prefix}:{source_key}"
+        key = parquet_checkpoint_key(self.root, source_key)
         if len(key) > 512:
             raise ValueError("Parquet checkpoint source key exceeds 512 characters")
         return key

@@ -149,10 +149,20 @@ def test_quality_report_surfaces_negative_price_and_invalid_ohlc_observations() 
 def test_quality_report_distinguishes_weekend_closures_from_gaps() -> None:
     friday = datetime(2025, 1, 10, 23, 59, tzinfo=UTC)
     monday = datetime(2025, 1, 13, 0, 0, tzinfo=UTC)
+    calendar = MarketCalendar.from_config(
+        {
+            "WTI": MarketScheduleSettings(
+                timezone="UTC",
+                weekdays=[0, 1, 2, 3, 4],
+                sessions=[{"open": "00:00", "close": "24:00"}],
+            )
+        }
+    )
     report = check_candle_quality(
         [candle(friday, 1), candle(monday, 2)],
         InstrumentCode.WTI,
         Timeframe.M1.value,
+        calendar=calendar,
     )
 
     assert report.missing_candle_count == 2880
@@ -210,6 +220,56 @@ def test_quality_report_honors_instrument_specific_sessions() -> None:
 
     assert report.gaps[0].expected_closure_count == 1
     assert report.unexpected_gap_count == 0
+
+
+def test_quality_report_separates_scheduled_weekend_closures_from_open_session_gaps() -> None:
+    schedule = MarketScheduleSettings(
+        timezone="UTC",
+        weekdays=[0, 1, 2, 3, 4],
+        sessions=[{"open": "00:00", "close": "24:00"}],
+    )
+    calendar = MarketCalendar.from_config({"WTI": schedule})
+
+    weekend = check_candle_quality(
+        [
+            candle(datetime(2025, 1, 10, 23, 59, tzinfo=UTC), 1),
+            candle(datetime(2025, 1, 13, 0, 0, tzinfo=UTC), 2),
+        ],
+        InstrumentCode.WTI,
+        1,
+        calendar=calendar,
+    )
+    intraday = check_candle_quality(
+        [
+            candle(datetime(2025, 1, 6, 12, 0, tzinfo=UTC), 1),
+            candle(datetime(2025, 1, 6, 12, 2, tzinfo=UTC), 2),
+        ],
+        InstrumentCode.WTI,
+        1,
+        calendar=calendar,
+    )
+
+    assert weekend.gaps[0].expected_closure_count == 2880
+    assert weekend.unexpected_gap_count == 0
+    assert intraday.missing_candle_count == 1
+    assert intraday.unexpected_gap_count == 1
+
+
+def test_default_market_calendars_are_distinct_and_configurable_by_instrument() -> None:
+    calendar = MarketCalendar()
+    sunday_evening = datetime(2025, 1, 5, 22, 0, tzinfo=UTC)
+    assert calendar.is_open(InstrumentCode.EURUSD, sunday_evening)
+    assert not calendar.is_open(InstrumentCode.XAUUSD, sunday_evening)
+    assert not calendar.is_open(InstrumentCode.WTI, sunday_evening)
+    assert not calendar.is_open(InstrumentCode.SPX500, sunday_evening)
+
+    override = MarketScheduleSettings(
+        timezone="UTC",
+        weekdays=[0, 1, 2, 3, 4, 5, 6],
+        sessions=[{"open": "00:00", "close": "24:00"}],
+    )
+    configured = MarketCalendar.from_config({"SPX500": override})
+    assert configured.is_open(InstrumentCode.SPX500, sunday_evening)
 
 
 def test_overnight_market_session_uses_opening_weekdays() -> None:

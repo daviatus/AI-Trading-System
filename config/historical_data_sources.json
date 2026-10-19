@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "sources": {
+    "histdata_generic_ascii": {
+      "provider": "HistData",
+      "format": "Generic ASCII M1",
+      "timestamp_timezone": "UTC-05:00 fixed EST; daylight saving is not applied",
+      "fixed_offset_minutes": -300,
+      "price_type": "bid",
+      "instruments": {
+        "EURUSD": {
+          "symbol": "EUR/USD",
+          "file_code": "EURUSD"
+        },
+        "XAUUSD": {
+          "symbol": "XAU/USD",
+          "file_code": "XAUUSD"
+        },
+        "WTI": {
+          "symbol": "WTI/USD",
+          "file_code": "USOIL"
+        },
+        "SPX500": {
+          "symbol": "SPX/USD",
+          "file_code": "SPXUSD"
+        }
+      }
+    }
+  }
+}

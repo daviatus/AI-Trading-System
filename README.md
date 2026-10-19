@@ -82,14 +82,14 @@ Each candle batch and its contiguous checkpoint commit together. Retries resume 
 
 ### Session and quality settings
 
-`MARKET_SESSIONS` accepts JSON keyed by canonical instrument. With no override, checks use a generic UTC weekday schedule (00:00–24:00 Mon–Fri) and classify weekends as expected closures; this is a baseline calendar, **not a broker-hours assertion**. Configure actual verified sessions, timezone, weekdays and daily closures when known:
+`MARKET_SESSIONS` accepts JSON keyed by canonical instrument. The built-in fallback calendars are instrument-specific provisional baselines: EURUSD uses a Sunday-to-Friday New York session, XAUUSD and WTI use Sunday-to-Friday sessions with a daily break, and SPX500 uses the New York weekday cash session. These are not broker-hour or holiday guarantees. Override each instrument with verified provider/broker sessions before operational quality decisions. The quality report includes an aggregate `missing_volume_count`; unavailable volume does not generate per-candle warnings.
 
 ```dotenv
-MARKET_SESSIONS={"WTI":{"timezone":"America/New_York","weekdays":[0,1,2,3,6],"sessions":[{"open":"18:00","close":"17:00"}]},"EURUSD":{"timezone":"Europe/London","weekdays":[0,1,2,3,4],"sessions":[{"open":"00:00","close":"24:00"}]}}
+MARKET_SESSIONS={"EURUSD":{"timezone":"America/New_York","weekdays":[0,1,2,3,6],"sessions":[{"open":"17:00","close":"17:00"}]},"XAUUSD":{"timezone":"America/New_York","weekdays":[0,1,2,3,6],"sessions":[{"open":"18:00","close":"17:00"}]},"WTI":{"timezone":"America/New_York","weekdays":[0,1,2,3,6],"sessions":[{"open":"18:00","close":"17:00"}]},"SPX500":{"timezone":"America/New_York","weekdays":[0,1,2,3,4],"sessions":[{"open":"09:30","close":"16:00"}]}}
 PRICE_JUMP_THRESHOLDS={"WTI":0.1,"XAUUSD":0.1,"EURUSD":0.03,"SPX500":0.1}
 ```
 
-Sessions support overnight windows; `weekdays` names the days on which an overnight session opens (so Sunday evening through Friday afternoon uses `[0,1,2,3,6]`). Quality reports check the requested range edges as well as observed candles for missing/duplicate/out-of-order rows, malformed OHLC, negative values, misaligned/non-UTC observations, price jumps, zero-volume bars/runs and expected closures. Price-jump defaults shown are example alert thresholds, not market limits. No public holiday calendar is assumed; configure session/closure data from a verified source before using quality classifications operationally.
+Sessions support overnight windows; `weekdays` names the days on which an overnight session opens (so Sunday evening through Friday afternoon uses `[0,1,2,3,6]`; equal open/close times denote a 24-hour overnight session). Quality reports check requested range edges as well as observed candles for missing/duplicate/out-of-order rows, malformed OHLC, negative values, misaligned/non-UTC observations, price jumps, zero-volume bars/runs and expected closures. Price-jump defaults shown are example alert thresholds, not market limits. No public holiday calendar is assumed; configure verified holidays or closures before using quality classifications operationally.
 
 ```powershell
 python -m trading.data.cli quality `
@@ -110,7 +110,7 @@ python -m trading.data.cli aggregate `
   --source-provider csv
 ```
 
-Provider 5-minute observations and `aggregate_1m` output are stored under separate source-provider keys. `compare_aggregated_source` reports field-level OHLCV discrepancies without silently choosing a winner. Keep the broker/provider source authoritative only after verifying its candle boundary, timezone, session rules and volume semantics; use the derived series as a separately auditable comparison. Select an explicit `--source-provider` for reports, exports and datasets where one source is intended.
+Provider 5-minute observations and `aggregate_1m` output are stored under separate source-provider keys. Aggregation requires an explicit `--source-provider`; that lineage is recorded in the derived candle metadata and stable source reference. Replaying identical bars is idempotent; Parquet rejects a conflicting derived candle rather than overwriting it. `compare_aggregated_source` reports field-level OHLCV discrepancies without silently choosing a winner. No missing M1 bars are synthesized. Keep the broker/provider source authoritative only after verifying its candle boundary, timezone, session rules and volume semantics.
 
 ### Parquet archives
 
@@ -139,6 +139,78 @@ python -m trading.data.cli import-parquet `
 
 Parquet import is idempotent against the same database source keys. Exported provenance travels with every row. Feature/target Parquet outputs are separate from the OHLCV archive.
 For optional predicate-pushed analytics over these files, install `python -m pip install -e ".[analytics]"` and use `DuckDBParquetAnalytics` from `trading.storage`; DuckDB creates no persistent copy. Feature datasets retain separate targets and include feature schema v2 metadata while remaining readable alongside existing Phase 2B schema v1 datasets. See [the storage architecture](./ai_trading_project_spec/ARCHITECTURE.md) for the typed access facade, SQLite trade schema and backup guidance.
+
+### HistData Generic ASCII M1 imports
+
+Phase 3A.1 adds a local-file-only HistData provider. It does not download data or
+contact a broker. Candle timestamps are interpreted using fixed UTC-05:00
+(HistData's fixed EST convention); daylight-saving adjustments are never
+applied. Source ID, file path, SHA-256, bid price type, original timestamp and
+quality metadata are retained. Source/import-job metadata is tracked in
+PostgreSQL. Parquet is the default candle destination; use `--storage postgres`
+to store candles in PostgreSQL instead.
+
+The instrument mapping is in
+[`config/historical_data_sources.json`](./config/historical_data_sources.json):
+EURUSD -> EUR/USD, XAUUSD -> XAU/USD, WTI -> WTI/USD and SPX500 -> SPX/USD.
+The `file_code` values are configurable hints and must be confirmed against
+the actual HistData archive naming before bulk imports. HistData input is M1;
+derive finalized M5 bars afterward using the existing `aggregate` command.
+
+```powershell
+python -m trading.data.cli import-histdata `
+  --source-file .\data\histdata\EURUSD.csv `
+  --instrument EURUSD `
+  --start "2026-01-01T00:00:00+00:00" `
+  --end "2026-02-01T00:00:00+00:00" `
+  --storage parquet `
+  --data-root .\data\market\ohlcv
+```
+
+Use `--storage postgres` for the PostgreSQL destination, or `--help` for
+available options. Import ranges are half-open. Duplicate or out-of-order
+timestamps in a source file fail validation rather than being silently
+discarded. The January 2026 EURUSD M1 file has been imported; validate each
+additional source/archive convention with a dry run before importing it.
+
+### Resumable monthly HistData batches
+
+`import-histdata-batch` discovers `DAT_ASCII_<file-code>_M1_YYYYMM.csv` and
+matching `.zip` archives recursively. ZIP CSV members are streamed directly
+without extracting archives. A dry run parses and validates files but does not
+connect to PostgreSQL or write Parquet/checkpoints:
+
+```powershell
+python -m trading.data.cli import-histdata-batch `
+  --input-dir .\data\histdata `
+  --instrument EURUSD `
+  --start "2026-01-01T05:00:00+00:00" `
+  --end "2026-03-01T05:00:00+00:00" `
+  --storage parquet `
+  --batch-size 50000 `
+  --dry-run
+```
+
+For a real two-month pilot, first inspect the dry-run output, then rerun without
+`--dry-run` using the same range and input directory:
+
+```powershell
+python -m trading.data.cli import-histdata-batch `
+  --input-dir .\data\histdata `
+  --instrument EURUSD `
+  --start "2026-01-01T05:00:00+00:00" `
+  --end "2026-03-01T05:00:00+00:00" `
+  --storage parquet `
+  --batch-size 50000
+```
+
+The importer processes months chronologically, clips each file to the
+requested half-open range, records a separate import job per file, and skips a
+file only when its checksum and exact import parameters already have a
+completed job. Failed files are reported while later months continue. Retrying
+uses the existing per-file checkpoint and Parquet conflict detection. Duplicate
+files for one instrument/month and row dates inconsistent with the filename are
+reported as failures for operator review.
 
 Benchmark representative local storage workloads (the default writes one million deterministic candles):
 

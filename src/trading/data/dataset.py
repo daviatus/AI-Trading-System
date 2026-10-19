@@ -287,7 +287,7 @@ def _candles_to_frame(
                 "high": float(candle.high),
                 "low": float(candle.low),
                 "close": float(candle.close),
-                "volume": float(candle.volume),
+                "volume": float(candle.volume) if candle.volume is not None else float("nan"),
             }
         )
     frame = pd.DataFrame.from_records(records).set_index("opened_at").sort_index()
