@@ -17,6 +17,7 @@ from trading.ctrader.oauth import (
 from trading.ctrader.parquet import persist_candles
 from trading.ctrader.postgres import import_api_candles, import_parquet_dataset
 from trading.ctrader.quality import validate_candle_data
+from trading.ctrader.sync import MAX_SYNC_DAYS, CTraderSyncService
 from trading.data.repository import PostgresMarketDataRepository
 
 
@@ -30,6 +31,33 @@ def _parser() -> argparse.ArgumentParser:
         help="Revalidate and import a cTrader Parquet dataset into PostgreSQL",
     )
     parquet_import.add_argument("--input", required=True, help="cTrader Parquet dataset root")
+    sync = commands.add_parser(
+        "sync",
+        help="Find and synchronize missing EURUSD M1 demo candles",
+    )
+    sync.add_argument("--instrument", choices=["EURUSD"], required=True)
+    sync.add_argument("--environment", choices=["demo"], required=True)
+    sync.add_argument("--timeframe", choices=["M1"], required=True)
+    sync.add_argument("--start", type=_parse_utc_datetime, required=True)
+    sync.add_argument("--end", type=_parse_utc_datetime, required=True)
+    sync.add_argument("--account-id", type=int)
+    sync.add_argument(
+        "--max-days",
+        type=int,
+        default=MAX_SYNC_DAYS,
+        help=f"Maximum requested window length in days (1-{MAX_SYNC_DAYS})",
+    )
+    sync.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Inspect PostgreSQL and print the missing-range plan without API requests or writes",
+    )
+    sync.add_argument(
+        "--save-postgres",
+        action="store_true",
+        help="Explicitly allow validated missing candles to be inserted into PostgreSQL",
+    )
+    sync.add_argument("--json", action="store_true", help="Print a machine-readable JSON summary")
     accounts = commands.add_parser("accounts", help="List accessible demo accounts")
     accounts.add_argument("--environment", choices=["demo"], required=True)
     symbols = commands.add_parser("symbols", help="Discover EURUSD demo symbol metadata")
@@ -109,6 +137,33 @@ def main(argv: list[str] | None = None) -> int:
                 or import_report.conflicting > 0
                 or import_report.rejected > 0
             )
+
+        if arguments.command == "sync":
+            from trading.db import get_engine
+
+            service = CTraderSyncService(
+                PostgresMarketDataRepository(get_engine()),
+                account_id=arguments.account_id,
+            )
+            if not arguments.dry_run:
+                manager = OAuthManager(CTraderSecretStore())
+                client_id, client_secret = manager.credentials()
+                access_token = manager.access_token()
+                service.client = CTraderReadOnlyClient(client_id, client_secret, access_token)
+            summary = asyncio.run(
+                service.synchronize(
+                    arguments.start,
+                    arguments.end,
+                    max_days=arguments.max_days,
+                    dry_run=arguments.dry_run,
+                    save_postgres=arguments.save_postgres,
+                )
+            )
+            if arguments.json:
+                print(json.dumps(summary, indent=2))
+            else:
+                print(_format_sync_summary(summary))
+            return int(summary["status"] == "incomplete")
 
         manager = OAuthManager(CTraderSecretStore())
         if arguments.command == "configure":
@@ -220,6 +275,25 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, SQLAlchemyError, ValueError) as error:
         print(f"cTrader: {error}", file=sys.stderr)
         return 1
+
+
+def _format_sync_summary(summary: dict[str, object]) -> str:
+    requested = summary["requested_interval"]
+    lines = [
+        f"Status: {summary['status']}",
+        f"Instrument/timeframe: {summary['instrument']} {summary['timeframe']}",
+        f"Requested UTC interval: {requested['start']} to {requested['end']} [start, end)",
+        f"Existing candles: {summary['existing_candle_count']}",
+        f"Missing candles identified: {summary['missing_candle_count']}",
+        f"Missing intervals: {len(summary['missing_intervals_identified'])}",
+        f"API requests attempted: {summary['api_requests_attempted']}",
+        f"Candles retrieved/validated: {summary['candles_retrieved']}/"
+        f"{summary['candles_validated']}",
+        f"Inserted/unchanged: {summary['candles_inserted']}/{summary['unchanged_records']}",
+        f"Conflicts/rejected: {summary['conflicts']}/{summary['rejected_records']}",
+        f"Unresolved gaps: {len(summary['unresolved_gaps'])}",
+    ]
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":

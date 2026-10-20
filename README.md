@@ -44,7 +44,7 @@ Health endpoint tests replace the database probe and do not require Docker or br
 
 ## cTrader Open API (read-only, DEMO only)
 
-The optional cTrader CLI uses the Open API JSON-over-WebSocket endpoint for demo accounts. It requests only the OAuth `accounts` scope, rejects live accounts, and does not write to PostgreSQL or Parquet. The official Twisted SDK currently requires a Windows native build dependency in this environment, so this integration uses the documented JSON protocol with the bounded `websockets` dependency instead.
+The optional cTrader CLI uses the Open API JSON-over-WebSocket endpoint for demo accounts. It requests only the OAuth `accounts` scope, rejects live accounts, and writes to PostgreSQL or Parquet only when the corresponding explicit option is supplied. The official Twisted SDK currently requires a Windows native build dependency in this environment, so this integration uses the documented JSON protocol with the bounded `websockets` dependency instead.
 
 The cTrader WebSocket receive limit defaults to 8 MiB for symbol-list responses and is bounded to 16 MiB. Library callers may configure `max_message_size_bytes` when constructing `CTraderReadOnlyClient`; the limit cannot be disabled.
 
@@ -94,7 +94,7 @@ ctrader candles --instrument EURUSD --environment demo --start 2026-06-01T00:00:
 
 Parquet output uses the repository's versioned OHLCV schema and Hive-style `instrument=EURUSD/timeframe=1m/year=YYYY/month=MM/part-000.parquet` partitions, with UTC timestamps, Decimal OHLCV, and cTrader demo lineage metadata. Only candles that pass validation are saved. Empty results create no files. An existing output root is never merged or replaced, and a failed write is staged outside the published root and cleaned up.
 
-PostgreSQL writes are also opt-in. Add `--import-postgres` to a retrieval command to validate the complete response and then import it into the existing `ohlcv_candles` table. Without that flag, retrieval never opens a database connection. The source is recorded as `ctrader_open_api_demo`, separate from `histdata_generic_ascii`; repeated identical imports are unchanged, and conflicting existing OHLCV values are reported without being overwritten:
+PostgreSQL writes are opt-in. Add `--import-postgres` to a retrieval command to validate the complete response and then import it into the existing `ohlcv_candles` table. Without that flag, the `candles` retrieval command never opens a database connection. The source is recorded as `ctrader_open_api_demo`, separate from `histdata_generic_ascii`; repeated identical imports are unchanged, and conflicting existing OHLCV values are reported without being overwritten:
 
 ```powershell
 ctrader candles --instrument EURUSD --environment demo --start 2026-06-01T00:00:00Z --end 2026-06-01T00:05:00Z --import-postgres
@@ -107,6 +107,37 @@ ctrader import-parquet --input .\data\ctrader-june
 ```
 
 Both explicit import workflows return `postgres_import` counts for `seen`, `inserted`, `unchanged`, `conflicting` and `rejected`. Conflicts and rejected records produce a nonzero exit status; records with conflicting values are never updated. PostgreSQL uniqueness remains scoped to instrument, timeframe, UTC open time, source provider and price type, so cTrader records do not replace HistData records. No migration is required: those source-aware columns and constraints already exist.
+
+### Incremental historical synchronization
+
+`ctrader sync` compares the requested interval with existing `ctrader_open_api_demo` EURUSD M1 candles, excluding other providers and price types. Only expected market-open gaps are requested; only the known weekend closure (Friday 17:00 to Sunday 17:00 New York time, DST-aware) is skipped; there is no daily rollover closure, so weekday minutes without a candle (including around 22:00 UTC) are reported as unresolved gaps, and candles at or after the current minute are never fetched. An explicit EURUSD `MARKET_SESSIONS` setting replaces this default calendar. Requests use the existing 24-hour API chunks and bounded retry policy. Returned data is validated with the shared cTrader validator; missing API candles are reported as unresolved rather than interpolated. The repository's source-aware unique constraint and transactional import make interrupted or concurrent runs safe; conflicting prices are not overwritten.
+
+Always begin with a database-only plan. Dry-run never reads cTrader credentials, calls the API, or writes to PostgreSQL:
+
+```powershell
+ctrader sync --instrument EURUSD --environment demo --timeframe M1 --start 2026-06-01T00:00:00Z --end 2026-06-02T00:00:00Z --dry-run --json
+```
+
+Without `--dry-run`, the command retrieves and validates missing history but does not write it. Use `--save-postgres` to explicitly allow validated inserts. Add `--max-days` to lower the maximum requested window (the API-supported upper bound is 31 days), and `--json` for a machine-readable summary. The summary includes the requested and effective UTC intervals, gaps, API attempts, validation, persistence counts, and status; a range with unresolved gaps is never reported complete.
+
+For manual PostgreSQL integration testing, use a disposable container on a separate loopback-only port. Apply migrations only to this disposable database. Begin with dry-run; a write test additionally needs configured cTrader demo credentials and retrieves history from the demo API:
+
+```powershell
+docker run -d --rm --name ctrader-sync-test `
+  -e POSTGRES_USER=trading -e POSTGRES_PASSWORD=temporary-test-only `
+  -e POSTGRES_DB=trading -p 127.0.0.1:55432:5432 postgres:16
+$env:DATABASE_URL = "postgresql+psycopg://trading:temporary-test-only@127.0.0.1:55432/trading"
+.\.venv\Scripts\alembic.exe upgrade head
+ctrader sync --instrument EURUSD --environment demo --timeframe M1 `
+  --start 2026-06-01T00:00:00Z --end 2026-06-01T00:05:00Z --dry-run --json
+# Only after reviewing the plan and verifying DATABASE_URL points to the disposable container:
+ctrader sync --instrument EURUSD --environment demo --timeframe M1 `
+  --start 2026-06-01T00:00:00Z --end 2026-06-01T00:05:00Z --save-postgres --json
+docker stop ctrader-sync-test
+Remove-Item Env:DATABASE_URL
+```
+
+Never use a personal, shared, or production database for write testing. Automated tests use in-memory fakes and do not connect to PostgreSQL or cTrader.
 
 For a safe manual integration check, use an isolated disposable PostgreSQL container on a separate port, never the project's configured database:
 

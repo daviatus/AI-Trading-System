@@ -221,6 +221,7 @@ class CTraderReadOnlyClient:
         account_id: int | None = None,
         *,
         diagnostics: bool = False,
+        request_observer: Callable[[], None] | None = None,
     ) -> list[dict]:
         start, end = _validate_candle_range(start, end)
         symbol_metadata = await self.discover_eurusd(account_id)
@@ -239,6 +240,8 @@ class CTraderReadOnlyClient:
             _verify_account_authorization(account_auth, selected_id)
             # count limits bars backward from toTimestamp; omit it to keep sparse
             # ranges bounded by fromTimestamp.
+            if request_observer is not None:
+                request_observer()
             response = await self._request(
                 websocket,
                 *TRENDBARS,
@@ -280,6 +283,7 @@ class CTraderReadOnlyClient:
         account_id: int | None = None,
         *,
         diagnostics: bool = False,
+        request_observer: Callable[[], None] | None = None,
     ) -> list[dict]:
         start, end = _validate_candle_range(
             start,
@@ -294,12 +298,21 @@ class CTraderReadOnlyClient:
             chunk_end = min(chunk_start + MAX_CANDLE_REQUEST_INTERVAL, end)
             for attempt in range(MAX_CANDLE_CHUNK_ATTEMPTS):
                 try:
-                    chunk = await self.get_eurusd_m1_candles(
-                        chunk_start,
-                        chunk_end,
-                        account_id,
-                        diagnostics=diagnostics,
-                    )
+                    if request_observer is None:
+                        chunk = await self.get_eurusd_m1_candles(
+                            chunk_start,
+                            chunk_end,
+                            account_id,
+                            diagnostics=diagnostics,
+                        )
+                    else:
+                        chunk = await self.get_eurusd_m1_candles(
+                            chunk_start,
+                            chunk_end,
+                            account_id,
+                            diagnostics=diagnostics,
+                            request_observer=request_observer,
+                        )
                     break
                 except _RetryableCTraderError as error:
                     if attempt + 1 >= MAX_CANDLE_CHUNK_ATTEMPTS:

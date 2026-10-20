@@ -22,6 +22,7 @@ from trading.ctrader.client import (
     MAX_CANDLE_CHUNK_ATTEMPTS,
     MAX_MULTI_DAY_CANDLE_DURATION,
     OPEN_API_ERROR_RESPONSE,
+    READ_ONLY_MESSAGES,
     SYMBOL_BY_ID,
     SYMBOLS_LIST,
     TRADER,
@@ -1453,6 +1454,65 @@ def test_multi_day_candles_retry_transient_failures_with_bounded_backoff(capsys)
         BASE_CANDLE_RETRY_DELAY_SECONDS * 2,
     ]
     assert "retrying historical candle chunk" in capsys.readouterr().err
+
+
+def test_multi_day_candle_request_observer_counts_only_historical_attempts():
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = start + timedelta(minutes=1)
+    client, websocket, _ = _client(
+        _responses(
+            accounts=[{"ctidTraderAccountId": 22, "isLive": False}],
+            symbols=[{"symbolName": "EURUSD", "symbolId": 77}],
+        )
+    )
+    attempts = []
+
+    candles = asyncio.run(
+        client.get_eurusd_m1_candles_multi_day(
+            start,
+            end,
+            request_observer=lambda: attempts.append("trendbar"),
+        )
+    )
+
+    assert candles == []
+    assert attempts == ["trendbar"]
+    assert all(request["payloadType"] in READ_ONLY_MESSAGES for request in websocket.sent)
+    assert [request["payloadType"] for request in websocket.sent].count(TRENDBARS[0]) == 1
+
+
+def test_multi_day_retry_observer_counts_each_bounded_retry():
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = start + timedelta(minutes=1)
+    client, _, _ = _client(_responses())
+    requests = []
+    observed_attempts = []
+
+    async def retrieve(
+        _chunk_start,
+        _chunk_end,
+        _account_id=None,
+        *,
+        diagnostics=False,
+        request_observer=None,
+    ):
+        requests.append(None)
+        request_observer()
+        if len(requests) < 3:
+            raise _RetryableCTraderError("temporary transport error")
+        return []
+
+    client.get_eurusd_m1_candles = retrieve
+    result = asyncio.run(
+        client.get_eurusd_m1_candles_multi_day(
+            start,
+            end,
+            request_observer=lambda: observed_attempts.append("trendbar"),
+        )
+    )
+
+    assert result == []
+    assert len(requests) == len(observed_attempts) == 3
 
 
 def test_multi_day_candles_stop_after_retry_exhaustion(capsys):
