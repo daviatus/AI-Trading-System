@@ -67,6 +67,14 @@ ctrader symbols --instrument EURUSD --environment demo
 
 If more than one demo account is accessible, `ctrader symbols` requires an explicit `--account-id`; it will not fall back to a live account. Symbol discovery reports the broker's observed EURUSD name, ID, account association and precision without persisting a mapping. No OAuth login or live API request is run by automated tests.
 
+Retrieve a short, read-only EURUSD M1 interval by supplying explicit UTC timestamps:
+
+```powershell
+ctrader candles --instrument EURUSD --environment demo --start 2026-06-01T00:00:00Z --end 2026-06-01T00:05:00Z
+```
+
+The command treats the requested interval as half-open (`--start` included, `--end` excluded), requires an interval no longer than 24 hours, uses the selected demo account's discovered EURUSD symbol ID, and returns UTC JSON candles. Prices are decoded from cTrader's relative trendbar fields using `low + delta` and the protocol's 100000 price scale. `volume` is retained as cTrader's raw protocol integer because the trendbar schema does not define a conversion unit. This command makes a real demo API request; automated tests use mocks only.
+
 ## cTrader Copy History exporter
 
 The read-only one-week, 20-trade-capped dry run and interactive DOM diagnostic

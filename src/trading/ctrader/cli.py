@@ -3,6 +3,7 @@ import asyncio
 import getpass
 import json
 import sys
+from datetime import UTC, datetime
 
 from trading.ctrader.client import CTraderError, CTraderReadOnlyClient
 from trading.ctrader.oauth import (
@@ -24,7 +25,23 @@ def _parser() -> argparse.ArgumentParser:
     symbols.add_argument("--instrument", choices=["EURUSD"], required=True)
     symbols.add_argument("--environment", choices=["demo"], required=True)
     symbols.add_argument("--account-id", type=int)
+    candles = commands.add_parser("candles", help="Retrieve EURUSD M1 demo candles")
+    candles.add_argument("--instrument", choices=["EURUSD"], required=True)
+    candles.add_argument("--environment", choices=["demo"], required=True)
+    candles.add_argument("--start", type=_parse_utc_datetime, required=True)
+    candles.add_argument("--end", type=_parse_utc_datetime, required=True)
+    candles.add_argument("--account-id", type=int)
     return parser
+
+
+def _parse_utc_datetime(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("timestamp must be ISO-8601 UTC") from error
+    if parsed.tzinfo is None or parsed.utcoffset() != UTC.utcoffset(parsed):
+        raise argparse.ArgumentTypeError("timestamp must include the UTC timezone")
+    return parsed.astimezone(UTC)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -49,8 +66,16 @@ def main(argv: list[str] | None = None) -> int:
         client = CTraderReadOnlyClient(client_id, client_secret, access_token)
         if arguments.command == "accounts":
             result = asyncio.run(client.list_demo_accounts())
-        else:
+        elif arguments.command == "symbols":
             result = asyncio.run(client.discover_eurusd(arguments.account_id))
+        else:
+            result = asyncio.run(
+                client.get_eurusd_m1_candles(
+                    arguments.start,
+                    arguments.end,
+                    arguments.account_id,
+                )
+            )
         print(json.dumps(result, indent=2))
         return 0
     except (OAuthError, CTraderError) as error:

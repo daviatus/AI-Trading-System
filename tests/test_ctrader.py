@@ -1,11 +1,14 @@
+import argparse
 import asyncio
 import json
 import urllib.parse
+from datetime import UTC, datetime
 
 import pytest
 from websockets.exceptions import ConnectionClosedError
 from websockets.frames import Close
 
+from trading.ctrader.cli import _parse_utc_datetime, _parser
 from trading.ctrader.client import (
     ACCOUNT_AUTH,
     ACCOUNT_LIST,
@@ -19,6 +22,7 @@ from trading.ctrader.client import (
     SYMBOL_BY_ID,
     SYMBOLS_LIST,
     TRADER,
+    TRENDBARS,
     UNSOLICITED_EVENT_TYPES,
     CTraderError,
     CTraderReadOnlyClient,
@@ -67,6 +71,7 @@ class FakeWebSocket:
             TRADER[0]: TRADER[1],
             SYMBOLS_LIST[0]: SYMBOLS_LIST[1],
             SYMBOL_BY_ID[0]: SYMBOL_BY_ID[1],
+            TRENDBARS[0]: TRENDBARS[1],
         }[payload_type]
         payload = self.responses[payload_type]
         if isinstance(payload, Exception):
@@ -109,6 +114,12 @@ def _responses(accounts=None, symbols=None):
         TRADER[0]: {"trader": {"brokerName": "Demo Broker", "traderLogin": 123}},
         SYMBOLS_LIST[0]: {"symbol": symbols or []},
         SYMBOL_BY_ID[0]: {"symbol": [{"digits": 5, "pipPosition": 4}]},
+        TRENDBARS[0]: {
+            "ctidTraderAccountId": account_id,
+            "period": 1,
+            "symbolId": 77,
+            "trendbar": [],
+        },
     }
 
 
@@ -975,3 +986,219 @@ def test_order_request_payload_type_is_not_treated_as_an_unsolicited_event():
                 {},
             )
         )
+
+
+def _trendbar(
+    timestamp_minutes,
+    *,
+    low=110000,
+    open_delta=100,
+    close_delta=300,
+    high_delta=500,
+    volume=23,
+):
+    return {
+        "utcTimestampInMinutes": timestamp_minutes,
+        "low": low,
+        "deltaOpen": open_delta,
+        "deltaClose": close_delta,
+        "deltaHigh": high_delta,
+        "volume": volume,
+    }
+
+
+def _candle_client(trendbars, *, has_more=None):
+    responses = _responses(
+        accounts=[{"ctidTraderAccountId": 22, "isLive": False}],
+        symbols=[{"symbolId": 77, "symbolName": "EURUSD"}],
+    )
+    responses[TRENDBARS[0]]["trendbar"] = trendbars
+    if has_more is not None:
+        responses[TRENDBARS[0]]["hasMore"] = has_more
+    return _client(responses)
+
+
+def test_historical_m1_request_uses_discovered_demo_account_and_symbol():
+    start = datetime(2026, 1, 2, 3, 4, tzinfo=UTC)
+    end = datetime(2026, 1, 2, 3, 6, tzinfo=UTC)
+    start_minutes = int(start.timestamp()) // 60
+    client, websocket, connector = _candle_client(
+        [_trendbar(start_minutes), _trendbar(start_minutes + 1)]
+    )
+
+    candles = asyncio.run(client.get_eurusd_m1_candles(start, end))
+
+    request = next(message for message in websocket.sent if message["payloadType"] == TRENDBARS[0])
+    assert request["payload"] == {
+        "ctidTraderAccountId": 22,
+        "fromTimestamp": int(start.timestamp()) * 1000,
+        "toTimestamp": int(end.timestamp()) * 1000 - 1,
+        "period": 1,
+        "symbolId": 77,
+        "count": 2,
+    }
+    assert connector.urls == ["wss://demo.ctraderapi.com:5036"] * 2
+    assert [candle["opened_at"] for candle in candles] == [
+        "2026-01-02T03:04:00Z",
+        "2026-01-02T03:05:00Z",
+    ]
+    assert candles[0]["open"] == "1.10100"
+    assert candles[0]["close"] == "1.10300"
+    assert candles[0]["high"] == "1.10500"
+    assert candles[0]["low"] == "1.10000"
+    assert candles[0]["volume"] == "23"
+    assert candles[0]["quality_metadata"]["volume_units"] == "raw_protocol_integer"
+
+
+def test_historical_m1_empty_result_returns_empty_list():
+    start = datetime(2026, 1, 2, 3, 4, tzinfo=UTC)
+    end = datetime(2026, 1, 2, 3, 5, tzinfo=UTC)
+    client, _, _ = _candle_client([])
+    assert asyncio.run(client.get_eurusd_m1_candles(start, end)) == []
+
+
+def test_historical_m1_accepts_has_more_for_a_full_requested_interval():
+    start = datetime(2026, 1, 5, 0, 0, tzinfo=UTC)
+    end = datetime(2026, 1, 5, 0, 5, tzinfo=UTC)
+    start_minutes = int(start.timestamp()) // 60
+    client, websocket, _ = _candle_client(
+        [_trendbar(start_minutes + offset) for offset in range(5)],
+        has_more=True,
+    )
+
+    candles = asyncio.run(client.get_eurusd_m1_candles(start, end))
+
+    assert len(candles) == 5
+    assert [
+        message["payload"]["count"]
+        for message in websocket.sent
+        if message["payloadType"] == TRENDBARS[0]
+    ] == [5]
+
+
+def test_historical_m1_accepts_partial_response_and_market_gaps_with_has_more():
+    start = datetime(2026, 1, 5, 0, 0, tzinfo=UTC)
+    end = datetime(2026, 1, 5, 0, 5, tzinfo=UTC)
+    start_minutes = int(start.timestamp()) // 60
+    client, websocket, _ = _candle_client(
+        [_trendbar(start_minutes), _trendbar(start_minutes + 2), _trendbar(start_minutes + 4)],
+        has_more=True,
+    )
+
+    candles = asyncio.run(client.get_eurusd_m1_candles(start, end))
+
+    assert [candle["opened_at"] for candle in candles] == [
+        "2026-01-05T00:00:00Z",
+        "2026-01-05T00:02:00Z",
+        "2026-01-05T00:04:00Z",
+    ]
+    assert [
+        message["payload"]["count"]
+        for message in websocket.sent
+        if message["payloadType"] == TRENDBARS[0]
+    ] == [5]
+
+
+@pytest.mark.parametrize(
+    ("bars", "error"),
+    [
+        ([_trendbar(100, high_delta=100)], "invalid OHLC"),
+        ([_trendbar(100), _trendbar(100)], "duplicate"),
+        ([_trendbar(101), _trendbar(100)], "chronological"),
+        ([_trendbar(100, volume=-1)], "negative price or volume"),
+    ],
+)
+def test_malformed_historical_m1_candles_are_rejected(bars, error):
+    start = datetime.fromtimestamp(100 * 60, tz=UTC)
+    end = datetime.fromtimestamp(103 * 60, tz=UTC)
+    client, _, _ = _candle_client(bars, has_more=True)
+    with pytest.raises(CTraderError, match=error):
+        asyncio.run(client.get_eurusd_m1_candles(start, end))
+
+
+def test_historical_m1_rejects_non_boolean_has_more_metadata():
+    start = datetime(2026, 1, 5, 0, 0, tzinfo=UTC)
+    end = datetime(2026, 1, 5, 0, 1, tzinfo=UTC)
+    client, _, _ = _candle_client([], has_more="true")
+    with pytest.raises(CTraderError, match="pagination metadata"):
+        asyncio.run(client.get_eurusd_m1_candles(start, end))
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "error"),
+    [
+        (datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 1, tzinfo=UTC), "earlier"),
+        (
+            datetime(2026, 1, 1, tzinfo=UTC),
+            datetime(2026, 1, 2, 0, 1, tzinfo=UTC),
+            "24-hour",
+        ),
+        (
+            datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC),
+            datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
+            "whole minutes",
+        ),
+        (
+            datetime(2026, 1, 1, tzinfo=None),
+            datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
+            "UTC",
+        ),
+    ],
+)
+def test_historical_m1_range_requires_a_short_aligned_utc_interval(start, end, error):
+    client, _, _ = _candle_client([])
+    with pytest.raises(CTraderError, match=error):
+        asyncio.run(client.get_eurusd_m1_candles(start, end))
+
+
+def test_historical_m1_api_error_is_reported_with_stage_without_payload_values():
+    class TrendbarErrorSocket(FakeWebSocket):
+        async def send(self, message):
+            request = json.loads(message)
+            if request["payloadType"] != TRENDBARS[0]:
+                await super().send(message)
+                return
+            self.sent.append(request)
+            self.next_response = {
+                "clientMsgId": request["clientMsgId"],
+                "payloadType": OPEN_API_ERROR_RESPONSE,
+                "payload": {
+                    "errorCode": "NOT_AUTHORIZED",
+                    "description": "sensitive token text",
+                },
+            }
+
+    responses = _responses(
+        accounts=[{"ctidTraderAccountId": 22, "isLive": False}],
+        symbols=[{"symbolId": 77, "symbolName": "EURUSD"}],
+    )
+    websocket = TrendbarErrorSocket(responses)
+    connector = FakeConnect(websocket)
+    client = CTraderReadOnlyClient("id", "secret", "token", connect=connector, sleep=_no_sleep)
+    start = datetime(2026, 1, 2, 3, 4, tzinfo=UTC)
+    end = datetime(2026, 1, 2, 3, 5, tzinfo=UTC)
+    with pytest.raises(CTraderError) as error:
+        asyncio.run(client.get_eurusd_m1_candles(start, end))
+    assert "stage=historical_trendbars" in str(error.value)
+    assert "NOT_AUTHORIZED" in str(error.value)
+    assert "sensitive token text" not in str(error.value)
+
+
+def test_candles_cli_requires_explicit_demo_instrument_and_utc_interval():
+    args = _parser().parse_args(
+        [
+            "candles",
+            "--instrument",
+            "EURUSD",
+            "--environment",
+            "demo",
+            "--start",
+            "2026-01-02T03:04:00Z",
+            "--end",
+            "2026-01-02T03:05:00Z",
+        ]
+    )
+    assert args.command == "candles"
+    assert args.start == datetime(2026, 1, 2, 3, 4, tzinfo=UTC)
+    with pytest.raises(argparse.ArgumentTypeError):
+        _parse_utc_datetime("2026-01-02T03:04:00")

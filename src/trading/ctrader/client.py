@@ -3,8 +3,12 @@ import json
 import re
 import uuid
 from collections.abc import Callable, Mapping
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import websockets
+
+from trading.data.domain import Candle, InstrumentCode, PriceType, Timeframe
 
 DEMO_WEBSOCKET_URL = "wss://demo.ctraderapi.com:5036"
 DEFAULT_MAX_MESSAGE_SIZE_BYTES = 8 * 1024 * 1024
@@ -15,6 +19,9 @@ SYMBOLS_LIST = (2114, 2115)
 SYMBOL_BY_ID = (2116, 2117)
 TRADER = (2121, 2122)
 ACCOUNT_LIST = (2149, 2150)
+TRENDBARS = (2137, 2138)
+TRENDBAR_PRICE_SCALE = Decimal(100_000)
+MAX_CANDLE_REQUEST_INTERVAL = timedelta(days=1)
 ERROR_RESPONSE = 50
 OPEN_API_ERROR_RESPONSE = 2142
 HEARTBEAT_EVENT = 51
@@ -48,6 +55,7 @@ REQUEST_STAGES = {
     TRADER[0]: "trader_metadata",
     SYMBOLS_LIST[0]: "symbols_list",
     SYMBOL_BY_ID[0]: "symbol_details",
+    TRENDBARS[0]: "historical_trendbars",
 }
 READ_ONLY_MESSAGES = {
     APPLICATION_AUTH[0]: APPLICATION_AUTH[1],
@@ -56,6 +64,7 @@ READ_ONLY_MESSAGES = {
     SYMBOL_BY_ID[0]: SYMBOL_BY_ID[1],
     TRADER[0]: TRADER[1],
     ACCOUNT_LIST[0]: ACCOUNT_LIST[1],
+    TRENDBARS[0]: TRENDBARS[1],
 }
 
 
@@ -127,28 +136,7 @@ class CTraderReadOnlyClient:
                 *ACCOUNT_AUTH,
                 {"ctidTraderAccountId": selected_id, "accessToken": self._access_token},
             )
-            authenticated_account_id = account_auth_response.get("ctidTraderAccountId")
-            if authenticated_account_id is None:
-                raise CTraderError(
-                    "cTrader account authorization response is missing its account ID "
-                    "(stage=account_auth, payload_type=2103, "
-                    "account_id_present=false, symbols_request_sent=false)"
-                )
-            try:
-                authenticated_account_id = _account_id(authenticated_account_id)
-            except CTraderError as error:
-                raise CTraderError(
-                    "cTrader account authorization response has an invalid account ID "
-                    "(stage=account_auth, payload_type=2103, "
-                    "account_id_valid=false, symbols_request_sent=false)"
-                ) from error
-            if authenticated_account_id != selected_id:
-                raise CTraderError(
-                    "cTrader account authorization response did not match "
-                    "the selected demo account "
-                    "(stage=account_auth, payload_type=2103, "
-                    "account_id_match=false, symbols_request_sent=false)"
-                )
+            _verify_account_authorization(account_auth_response, selected_id)
             trader_response = await self._request(
                 websocket,
                 *TRADER,
@@ -214,6 +202,61 @@ class CTraderReadOnlyClient:
                 "pip_position": detail.get("pipPosition"),
             },
         }
+
+    async def get_eurusd_m1_candles(
+        self,
+        start: datetime,
+        end: datetime,
+        account_id: int | None = None,
+    ) -> list[dict]:
+        start, end = _validate_candle_range(start, end)
+        symbol_metadata = await self.discover_eurusd(account_id)
+        selected_id = symbol_metadata["account"]["account_id"]
+        symbol = symbol_metadata["symbol"]
+        symbol_id = _account_id(symbol["broker_symbol_id"])
+        digits = _symbol_digits(symbol.get("digits"))
+
+        async with self._connection() as websocket:
+            await self._authenticate_application(websocket)
+            account_auth = await self._request(
+                websocket,
+                *ACCOUNT_AUTH,
+                {"ctidTraderAccountId": selected_id, "accessToken": self._access_token},
+            )
+            _verify_account_authorization(account_auth, selected_id)
+            response = await self._request(
+                websocket,
+                *TRENDBARS,
+                {
+                    "ctidTraderAccountId": selected_id,
+                    "fromTimestamp": int(start.timestamp()) * 1000,
+                    "toTimestamp": int(end.timestamp()) * 1000 - 1,
+                    "period": Timeframe.M1.value,
+                    "symbolId": symbol_id,
+                    "count": int((end - start).total_seconds() // 60),
+                },
+                diagnostic_context={
+                    "account_auth_completed": True,
+                    "account_id_verified": True,
+                },
+            )
+        if _account_id(response.get("ctidTraderAccountId")) != selected_id:
+            raise CTraderError(
+                "cTrader trendbar response belongs to a different account "
+                "(stage=historical_trendbars, account_id_match=false)"
+            )
+        response_symbol_id = response.get("symbolId")
+        if response_symbol_id is not None and _account_id(response_symbol_id) != symbol_id:
+            raise CTraderError(
+                "cTrader trendbar response belongs to a different symbol "
+                "(stage=historical_trendbars, symbol_id_match=false)"
+            )
+        return _decode_m1_trendbars(
+            response,
+            start,
+            end,
+            digits,
+        )
 
     async def _authenticate_application(self, websocket) -> None:
         await self._request(
@@ -484,6 +527,175 @@ class _Connection:
 
 def _normalize_symbol(value: str) -> str:
     return "".join(character for character in value.upper() if character.isalnum())
+
+
+def _validate_candle_range(start: datetime, end: datetime) -> tuple[datetime, datetime]:
+    if not isinstance(start, datetime) or not isinstance(end, datetime):
+        raise CTraderError("cTrader candle range must use timezone-aware UTC datetimes")
+    if (
+        start.tzinfo is None
+        or end.tzinfo is None
+        or start.utcoffset() != timedelta(0)
+        or end.utcoffset() != timedelta(0)
+    ):
+        raise CTraderError("cTrader candle range must use UTC timestamps")
+    start = start.astimezone(UTC)
+    end = end.astimezone(UTC)
+    if start.second or start.microsecond or end.second or end.microsecond:
+        raise CTraderError("cTrader M1 candle range must align to whole minutes")
+    if start < datetime(1970, 1, 1, tzinfo=UTC) or end > datetime(
+        2038, 1, 19, 3, 14, 6, tzinfo=UTC
+    ):
+        raise CTraderError("cTrader candle range is outside the supported timestamp range")
+    if start >= end:
+        raise CTraderError("cTrader candle range start must be earlier than end")
+    if end - start > MAX_CANDLE_REQUEST_INTERVAL:
+        raise CTraderError("cTrader M1 requests are limited to a 24-hour UTC interval")
+    return start, end
+
+
+def _verify_account_authorization(response: Mapping, selected_id: int) -> None:
+    authenticated_account_id = response.get("ctidTraderAccountId")
+    if authenticated_account_id is None:
+        raise CTraderError(
+            "cTrader account authorization response is missing its account ID "
+            "(stage=account_auth, payload_type=2103, "
+            "account_id_present=false, symbols_request_sent=false)"
+        )
+    try:
+        authenticated_account_id = _account_id(authenticated_account_id)
+    except CTraderError as error:
+        raise CTraderError(
+            "cTrader account authorization response has an invalid account ID "
+            "(stage=account_auth, payload_type=2103, "
+            "account_id_valid=false, symbols_request_sent=false)"
+        ) from error
+    if authenticated_account_id != selected_id:
+        raise CTraderError(
+            "cTrader account authorization response did not match "
+            "the selected demo account "
+            "(stage=account_auth, payload_type=2103, "
+            "account_id_match=false, symbols_request_sent=false)"
+        )
+
+
+def _symbol_digits(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 10:
+        raise CTraderError("cTrader EURUSD symbol metadata has invalid price precision")
+    return value
+
+
+def _protocol_integer(value: object, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise CTraderError(
+            "cTrader trendbar contains a malformed numeric field "
+            f"(stage=historical_trendbars, field={field}, expected_type=int)"
+        )
+    return value
+
+
+def _decode_m1_trendbars(
+    response: Mapping,
+    start: datetime,
+    end: datetime,
+    digits: int,
+) -> list[dict]:
+    account_id = response.get("ctidTraderAccountId")
+    if account_id is None:
+        raise CTraderError(
+            "cTrader trendbar response is missing its account ID "
+            "(stage=historical_trendbars, payload_type=2138)"
+        )
+    _account_id(account_id)
+    period = response.get("period")
+    if isinstance(period, bool) or period not in (Timeframe.M1.value, "M1"):
+        raise CTraderError(
+            "cTrader returned a trendbar response for the wrong period "
+            "(stage=historical_trendbars, expected_period=M1)"
+        )
+
+    has_more = response.get("hasMore", False)
+    if not isinstance(has_more, bool):
+        raise CTraderError(
+            "cTrader trendbar response has malformed pagination metadata "
+            "(stage=historical_trendbars, field=hasMore, expected_type=bool)"
+        )
+    # count already covers every possible M1 candle in the requested range;
+    # hasMore may refer to records outside that bounded range.
+    bars = response.get("trendbar", [])
+    if not isinstance(bars, list) or any(not isinstance(bar, Mapping) for bar in bars):
+        raise CTraderError(
+            "cTrader returned malformed trendbar entries "
+            "(stage=historical_trendbars, field=trendbar, expected_type=list_of_objects)"
+        )
+
+    candles = []
+    previous_timestamp = None
+    for bar in bars:
+        timestamp_minutes = _protocol_integer(
+            bar.get("utcTimestampInMinutes"),
+            "utcTimestampInMinutes",
+        )
+        if timestamp_minutes < 0:
+            raise CTraderError(
+                "cTrader trendbar contains a negative timestamp "
+                "(stage=historical_trendbars, field=utcTimestampInMinutes)"
+            )
+        if not int(start.timestamp()) // 60 <= timestamp_minutes < int(end.timestamp()) // 60:
+            raise CTraderError(
+                "cTrader trendbar timestamp is outside the requested interval "
+                "(stage=historical_trendbars)"
+            )
+        opened_at = datetime.fromtimestamp(timestamp_minutes * 60, tz=UTC)
+        if previous_timestamp is not None:
+            if timestamp_minutes == previous_timestamp:
+                raise CTraderError(
+                    "cTrader returned duplicate M1 candle timestamps (stage=historical_trendbars)"
+                )
+            if timestamp_minutes < previous_timestamp:
+                raise CTraderError(
+                    "cTrader trendbars are not in chronological order (stage=historical_trendbars)"
+                )
+        previous_timestamp = timestamp_minutes
+
+        low = _protocol_integer(bar.get("low"), "low")
+        open_delta = _protocol_integer(bar.get("deltaOpen"), "deltaOpen")
+        close_delta = _protocol_integer(bar.get("deltaClose"), "deltaClose")
+        high_delta = _protocol_integer(bar.get("deltaHigh"), "deltaHigh")
+        volume = _protocol_integer(bar.get("volume"), "volume")
+        if low < 0 or volume < 0:
+            raise CTraderError(
+                "cTrader trendbar contains a negative price or volume (stage=historical_trendbars)"
+            )
+        precision = Decimal(1).scaleb(-digits)
+        prices = {
+            "low": Decimal(low) / TRENDBAR_PRICE_SCALE,
+            "open": Decimal(low + open_delta) / TRENDBAR_PRICE_SCALE,
+            "close": Decimal(low + close_delta) / TRENDBAR_PRICE_SCALE,
+            "high": Decimal(low + high_delta) / TRENDBAR_PRICE_SCALE,
+        }
+        try:
+            candle = Candle(
+                instrument=InstrumentCode.EURUSD,
+                timeframe=Timeframe.M1,
+                opened_at=opened_at,
+                volume=Decimal(volume),
+                price_type=PriceType.UNKNOWN,
+                quality_metadata={
+                    "source": "ctrader_open_api",
+                    "volume_units": "raw_protocol_integer",
+                },
+                **{key: value.quantize(precision) for key, value in prices.items()},
+            )
+        except ValueError as error:
+            raise CTraderError(
+                "cTrader returned an invalid OHLC candle (stage=historical_trendbars)"
+            ) from error
+        candle_data = candle.model_dump(mode="json")
+        candle_data["timeframe"] = Timeframe.M1.label
+        candle_data["opened_at"] = opened_at.isoformat().replace("+00:00", "Z")
+        candles.append(candle_data)
+    return candles
 
 
 def _account_id(value: object) -> int:
