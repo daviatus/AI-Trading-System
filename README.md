@@ -81,7 +81,18 @@ For multi-day ranges, opt in with `--multi-day`. Requests are split into consecu
 ctrader candles --instrument EURUSD --environment demo --start 2026-06-01T00:00:00Z --end 2026-06-04T00:00:00Z --multi-day
 ```
 
-The multi-day mode retries only transient transport failures and cTrader `BLOCKED_PAYLOAD_TYPE` rate limits, for up to three chunk attempts with exponential backoff. Existing connection setup also retains its bounded socket retries. A documented `retryAfter` delay is honored up to 60 seconds; longer delays and non-retryable errors are returned to the caller. Missing candles during market closures are valid. Duplicate timestamps or out-of-order results fail the request. Output remains JSON on stdout; retry and error messages go to stderr. Candle data is returned in memory only and is not persisted.
+The multi-day mode retries only transient transport failures and cTrader `BLOCKED_PAYLOAD_TYPE` rate limits, for up to three chunk attempts with exponential backoff. Existing connection setup also retains its bounded socket retries. A documented `retryAfter` delay is honored up to 60 seconds; longer delays and non-retryable errors are returned to the caller. Missing candles during market closures are valid. Duplicate timestamps or out-of-order results fail the request. Output remains JSON on stdout; retry and error messages go to stderr. Candle data is returned in memory only and is not persisted by default.
+
+Add `--quality-report` to return the candles together with a structured validation and gap report. Gaps are reported, not filled; missing market minutes do not by themselves make validation invalid. Invalid timestamps, duplicate or unsorted candles, non-positive prices, malformed OHLC, and out-of-range candles are errors. `volume` retains the raw cTrader protocol integer semantics (and remains nullable in the shared Parquet schema).
+
+Parquet persistence is explicit and publishes a new dataset atomically. The output root must not already exist, preventing accidental overwrites; use a new destination for each export. The default root is `data/ctrader-parquet`, and `--parquet-root` can select another location:
+
+```powershell
+ctrader candles --instrument EURUSD --environment demo --start 2026-06-01T00:00:00Z --end 2026-06-01T00:05:00Z --quality-report --save-parquet
+ctrader candles --instrument EURUSD --environment demo --start 2026-06-01T00:00:00Z --end 2026-06-04T00:00:00Z --multi-day --quality-report --save-parquet --parquet-root .\data\ctrader-june
+```
+
+Parquet output uses the repository's versioned OHLCV schema and Hive-style `instrument=EURUSD/timeframe=1m/year=YYYY/month=MM/part-000.parquet` partitions, with UTC timestamps, Decimal OHLCV, and cTrader demo lineage metadata. Only candles that pass validation are saved. Empty results create no files. An existing output root is never merged or replaced, and a failed write is staged outside the published root and cleaned up.
 
 If a server response contains a candle outside the requested interval, validation remains strict and fails rather than discarding it. Add `--diagnostics` to print the requested UTC bounds, request timestamps/count, response count, and offending candle timestamp to stderr for troubleshooting. It does not print account identifiers, credentials, or payload contents.
 

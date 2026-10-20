@@ -12,6 +12,8 @@ from trading.ctrader.oauth import (
     OAuthManager,
     run_browser_authorization,
 )
+from trading.ctrader.parquet import persist_candles
+from trading.ctrader.quality import validate_candle_data
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -40,6 +42,21 @@ def _parser() -> argparse.ArgumentParser:
         "--diagnostics",
         action="store_true",
         help="Print safe timestamp metadata to stderr if a candle is outside the requested range",
+    )
+    candles.add_argument(
+        "--quality-report",
+        action="store_true",
+        help="Include a structured candle-quality report in JSON output",
+    )
+    candles.add_argument(
+        "--save-parquet",
+        action="store_true",
+        help="Opt in to saving validated candles in a new Parquet dataset",
+    )
+    candles.add_argument(
+        "--parquet-root",
+        default="data/ctrader-parquet",
+        help="Output dataset root used with --save-parquet (must not already exist)",
     )
     return parser
 
@@ -96,7 +113,43 @@ def main(argv: list[str] | None = None) -> int:
                     diagnostics=arguments.diagnostics,
                 )
             )
-        print(json.dumps(result, indent=2))
+        if arguments.command == "candles":
+            validated_candles, quality_report = validate_candle_data(
+                result,
+                arguments.start,
+                arguments.end,
+            )
+            if arguments.save_parquet:
+                if quality_report["validation_status"] == "invalid":
+                    print(
+                        "cTrader: refusing Parquet persistence because "
+                        "candle quality validation failed",
+                        file=sys.stderr,
+                    )
+                    return 1
+                if validated_candles:
+                    try:
+                        output_files = persist_candles(
+                            validated_candles,
+                            arguments.parquet_root,
+                            arguments.start,
+                            arguments.end,
+                        )
+                    except (OSError, ValueError) as error:
+                        print(f"cTrader: Parquet persistence failed: {error}", file=sys.stderr)
+                        return 1
+                    print(
+                        f"Saved {len(validated_candles)} validated candles to "
+                        f"{len(output_files)} Parquet partition(s).",
+                        file=sys.stderr,
+                    )
+                else:
+                    print("No candles returned; no Parquet dataset was created.", file=sys.stderr)
+
+            output: object = result
+            if arguments.quality_report:
+                output = {"candles": result, "quality_report": quality_report}
+            print(json.dumps(output, indent=2))
         return 0
     except (OAuthError, CTraderError) as error:
         print(f"cTrader: {error}", file=sys.stderr)
