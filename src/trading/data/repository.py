@@ -1,6 +1,8 @@
 import json
 from collections.abc import Iterator
+from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Protocol
 
 from sqlalchemy import case, func, or_, select
@@ -59,6 +61,29 @@ class MarketDataRepository(Protocol):
         source_provider: str | None = None,
         batch_size: int = 2000,
     ) -> Iterator[tuple[Candle, str, str]]: ...
+
+
+class CandleImportRepository(Protocol):
+    def import_candles(
+        self,
+        instrument: Instrument,
+        timeframe: Timeframe,
+        provider: str,
+        records: list[tuple[Candle, str]],
+    ) -> "CandleImportReport": ...
+
+
+@dataclass(frozen=True)
+class CandleImportReport:
+    seen: int = 0
+    inserted: int = 0
+    unchanged: int = 0
+    conflicting: int = 0
+    rejected: int = 0
+    issues: tuple[str, ...] = ()
+
+    def as_dict(self) -> dict[str, object]:
+        return asdict(self)
 
 
 class PostgresMarketDataRepository:
@@ -172,6 +197,127 @@ class PostgresMarketDataRepository:
             )
         return inserted_count
 
+    def import_candles(
+        self,
+        instrument: Instrument,
+        timeframe: Timeframe,
+        provider: str,
+        records: list[tuple[Candle, str]],
+    ) -> CandleImportReport:
+        if not provider.strip() or len(provider) > 100:
+            raise ValueError("Candle source provider must contain 1 to 100 characters")
+
+        valid, rejected, conflicting, issues = _prepare_import_candles(
+            records,
+            instrument.symbol,
+            timeframe,
+        )
+        if not valid:
+            return CandleImportReport(
+                seen=len(records),
+                conflicting=conflicting,
+                rejected=rejected,
+                issues=tuple(issues),
+            )
+
+        table = OhlcvCandleRecord.__table__
+        key_to_record = {
+            (candle.opened_at, candle.price_type.value): (candle, source_reference)
+            for candle, source_reference in valid
+        }
+        inserted = unchanged = existing_conflicts = database_rejected = 0
+
+        with Session(self.engine) as session, session.begin():
+            if session.get(InstrumentRecord, instrument.symbol.value) is None:
+                raise ValueError(
+                    f"Canonical instrument is not present in PostgreSQL: {instrument.symbol.value}"
+                )
+
+            earliest = min(candle.opened_at for candle, _ in valid)
+            latest = max(candle.opened_at for candle, _ in valid)
+            existing_rows = session.scalars(
+                select(OhlcvCandleRecord).where(
+                    OhlcvCandleRecord.instrument_symbol == instrument.symbol.value,
+                    OhlcvCandleRecord.timeframe_minutes == timeframe.value,
+                    OhlcvCandleRecord.source_provider == provider,
+                    OhlcvCandleRecord.opened_at >= earliest,
+                    OhlcvCandleRecord.opened_at <= latest,
+                    OhlcvCandleRecord.price_type.in_(
+                        {price_type for _, price_type in key_to_record}
+                    ),
+                )
+            ).all()
+            existing = {
+                (row.opened_at, row.price_type): row
+                for row in existing_rows
+                if (row.opened_at, row.price_type) in key_to_record
+            }
+            pending = [record for key, record in key_to_record.items() if key not in existing]
+
+            if pending:
+                inserted_keys = set()
+                for offset in range(0, len(pending), 1000):
+                    chunk = pending[offset : offset + 1000]
+                    statement = insert(table).values(
+                        [
+                            _candle_record_values(candle, provider, source_reference)
+                            for candle, source_reference in chunk
+                        ]
+                    )
+                    result = session.execute(
+                        statement.on_conflict_do_nothing(
+                            constraint="uq_ohlcv_instrument_tf_time_source_price"
+                        ).returning(table.c.opened_at, table.c.price_type)
+                    )
+                    inserted_keys.update(result.all())
+                inserted = len(inserted_keys)
+
+                raced_keys = set(key_to_record).difference(existing, inserted_keys)
+                if raced_keys:
+                    raced_rows = session.scalars(
+                        select(OhlcvCandleRecord).where(
+                            OhlcvCandleRecord.instrument_symbol == instrument.symbol.value,
+                            OhlcvCandleRecord.timeframe_minutes == timeframe.value,
+                            OhlcvCandleRecord.source_provider == provider,
+                            OhlcvCandleRecord.opened_at.in_(
+                                {opened_at for opened_at, _ in raced_keys}
+                            ),
+                            OhlcvCandleRecord.price_type.in_(
+                                {price_type for _, price_type in raced_keys}
+                            ),
+                        )
+                    ).all()
+                    existing.update(
+                        {
+                            (row.opened_at, row.price_type): row
+                            for row in raced_rows
+                            if (row.opened_at, row.price_type) in raced_keys
+                        }
+                    )
+                    unresolved_keys = raced_keys.difference(existing)
+                    if unresolved_keys:
+                        database_rejected += len(unresolved_keys)
+                        issues.extend(
+                            f"Could not classify concurrent insert at {opened_at.isoformat()}"
+                            for opened_at, _ in sorted(unresolved_keys)
+                        )
+
+            for key, row in existing.items():
+                if _same_ohlcv(key_to_record[key][0], row):
+                    unchanged += 1
+                else:
+                    existing_conflicts += 1
+                    issues.append(f"Conflicting OHLCV values already exist at {key[0].isoformat()}")
+
+        return CandleImportReport(
+            seen=len(records),
+            inserted=inserted,
+            unchanged=unchanged,
+            conflicting=conflicting + existing_conflicts,
+            rejected=rejected + database_rejected,
+            issues=tuple(issues),
+        )
+
     def iter_candles(
         self,
         instrument: InstrumentCode,
@@ -242,6 +388,120 @@ class PostgresMarketDataRepository:
                     row.source_provider,
                     row.source_reference,
                 )
+
+
+def _prepare_import_candles(
+    records: list[tuple[Candle, str]],
+    instrument: InstrumentCode,
+    timeframe: Timeframe,
+) -> tuple[list[tuple[Candle, str]], int, int, list[str]]:
+    grouped: dict[tuple[datetime, str], list[tuple[Candle, str]]] = {}
+    rejected = conflicting = 0
+    issues: list[str] = []
+    previous_timestamp: datetime | None = None
+    for index, (candle, source_reference) in enumerate(records):
+        reason = _candle_rejection_reason(candle, instrument, timeframe)
+        if not source_reference.strip() or len(source_reference) > 512:
+            reason = "source reference must contain 1 to 512 characters"
+        if previous_timestamp is not None and candle.opened_at < previous_timestamp:
+            reason = "candles are not ordered by ascending timestamp"
+        previous_timestamp = candle.opened_at
+        if reason is not None:
+            rejected += 1
+            issues.append(f"Rejected candle at index {index}: {reason}")
+            continue
+        key = (candle.opened_at, candle.price_type.value)
+        grouped.setdefault(key, []).append((candle, source_reference))
+
+    valid: list[tuple[Candle, str]] = []
+    for key, duplicates in grouped.items():
+        if len(duplicates) == 1:
+            valid.append(duplicates[0])
+        elif all(_same_ohlcv(duplicates[0][0], item[0]) for item in duplicates[1:]):
+            valid.append(duplicates[0])
+            rejected += len(duplicates) - 1
+            issues.append(f"Rejected duplicate input timestamps at {key[0].isoformat()}")
+        else:
+            conflicting += len(duplicates)
+            issues.append(f"Conflicting duplicate input timestamps at {key[0].isoformat()}")
+    return valid, rejected, conflicting, issues
+
+
+def _candle_rejection_reason(
+    candle: Candle,
+    instrument: InstrumentCode,
+    timeframe: Timeframe,
+) -> str | None:
+    if candle.instrument != instrument:
+        return "instrument does not match the import"
+    if candle.timeframe != timeframe:
+        return "timeframe does not match the import"
+    if candle.opened_at.utcoffset() != UTC.utcoffset(candle.opened_at):
+        return "timestamp is not normalized to UTC"
+    if (
+        candle.opened_at.second
+        or candle.opened_at.microsecond
+        or candle.opened_at.minute % timeframe.value
+    ):
+        return "timestamp is not aligned to the timeframe"
+    prices = (candle.open, candle.high, candle.low, candle.close)
+    if any(not value.is_finite() or value <= 0 for value in prices):
+        return "OHLC prices must be finite and positive"
+    if (
+        candle.high < candle.low
+        or candle.high < candle.open
+        or candle.high < candle.close
+        or candle.low > candle.open
+        or candle.low > candle.close
+    ):
+        return "OHLC bounds are inconsistent"
+    if candle.volume is not None and (not candle.volume.is_finite() or candle.volume < 0):
+        return "volume must be finite and nonnegative"
+    for value in prices:
+        if _exceeds_numeric_precision(value, 20, 8):
+            return "OHLC price exceeds PostgreSQL NUMERIC(20, 8) precision"
+    if candle.volume is not None and _exceeds_numeric_precision(candle.volume, 24, 8):
+        return "volume exceeds PostgreSQL NUMERIC(24, 8) precision"
+    return None
+
+
+def _exceeds_numeric_precision(value: Decimal, precision: int, scale: int) -> bool:
+    digits = value.as_tuple().digits
+    exponent = value.as_tuple().exponent
+    while digits and digits[-1] == 0:
+        digits = digits[:-1]
+        exponent += 1
+    decimal_scale = max(-exponent, 0)
+    integer_digits = max(value.adjusted() + 1, 0) if value else 0
+    return decimal_scale > scale or integer_digits > precision - scale
+
+
+def _same_ohlcv(candle: Candle, record: object) -> bool:
+    return all(
+        getattr(record, field) == getattr(candle, field)
+        for field in ("open", "high", "low", "close", "volume")
+    )
+
+
+def _candle_record_values(
+    candle: Candle,
+    provider: str,
+    source_reference: str,
+) -> dict[str, object]:
+    return {
+        "instrument_symbol": candle.instrument.value,
+        "timeframe_minutes": candle.timeframe.value,
+        "opened_at": candle.opened_at,
+        "open": candle.open,
+        "high": candle.high,
+        "low": candle.low,
+        "close": candle.close,
+        "volume": candle.volume,
+        "price_type": candle.price_type.value,
+        "quality_metadata": candle.quality_metadata,
+        "source_provider": provider,
+        "source_reference": source_reference,
+    }
 
 
 class HistoricalImportRepository:

@@ -5,6 +5,8 @@ import json
 import sys
 from datetime import UTC, datetime
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from trading.ctrader.client import CTraderError, CTraderReadOnlyClient
 from trading.ctrader.oauth import (
     CTraderSecretStore,
@@ -13,7 +15,9 @@ from trading.ctrader.oauth import (
     run_browser_authorization,
 )
 from trading.ctrader.parquet import persist_candles
+from trading.ctrader.postgres import import_api_candles, import_parquet_dataset
 from trading.ctrader.quality import validate_candle_data
+from trading.data.repository import PostgresMarketDataRepository
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -21,6 +25,11 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("configure", help="Store cTrader application credentials securely")
     commands.add_parser("auth", help="Authorize read-only account access")
+    parquet_import = commands.add_parser(
+        "import-parquet",
+        help="Revalidate and import a cTrader Parquet dataset into PostgreSQL",
+    )
+    parquet_import.add_argument("--input", required=True, help="cTrader Parquet dataset root")
     accounts = commands.add_parser("accounts", help="List accessible demo accounts")
     accounts.add_argument("--environment", choices=["demo"], required=True)
     symbols = commands.add_parser("symbols", help="Discover EURUSD demo symbol metadata")
@@ -54,6 +63,11 @@ def _parser() -> argparse.ArgumentParser:
         help="Opt in to saving validated candles in a new Parquet dataset",
     )
     candles.add_argument(
+        "--import-postgres",
+        action="store_true",
+        help="Opt in to importing validated candles into PostgreSQL",
+    )
+    candles.add_argument(
         "--parquet-root",
         default="data/ctrader-parquet",
         help="Output dataset root used with --save-parquet (must not already exist)",
@@ -74,6 +88,28 @@ def _parse_utc_datetime(value: str) -> datetime:
 def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
     try:
+        if arguments.command == "import-parquet":
+            from trading.db import get_engine
+
+            quality, import_report = import_parquet_dataset(
+                PostgresMarketDataRepository(get_engine()),
+                arguments.input,
+            )
+            print(
+                json.dumps(
+                    {
+                        "quality_report": quality,
+                        "postgres_import": import_report.as_dict(),
+                    },
+                    indent=2,
+                )
+            )
+            return int(
+                quality["validation_status"] == "invalid"
+                or import_report.conflicting > 0
+                or import_report.rejected > 0
+            )
+
         manager = OAuthManager(CTraderSecretStore())
         if arguments.command == "configure":
             client_id = input("cTrader Client ID: ")
@@ -114,11 +150,23 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
         if arguments.command == "candles":
-            validated_candles, quality_report = validate_candle_data(
-                result,
-                arguments.start,
-                arguments.end,
-            )
+            import_report = None
+            if arguments.import_postgres:
+                from trading.db import get_engine
+
+                validated_candles, quality_report, import_report = import_api_candles(
+                    PostgresMarketDataRepository(get_engine()),
+                    result,
+                    arguments.start,
+                    arguments.end,
+                )
+            else:
+                validated_candles, quality_report = validate_candle_data(
+                    result,
+                    arguments.start,
+                    arguments.end,
+                )
+            save_rejected = False
             if arguments.save_parquet:
                 if quality_report["validation_status"] == "invalid":
                     print(
@@ -126,8 +174,8 @@ def main(argv: list[str] | None = None) -> int:
                         "candle quality validation failed",
                         file=sys.stderr,
                     )
-                    return 1
-                if validated_candles:
+                    save_rejected = True
+                elif validated_candles:
                     try:
                         output_files = persist_candles(
                             validated_candles,
@@ -147,11 +195,29 @@ def main(argv: list[str] | None = None) -> int:
                     print("No candles returned; no Parquet dataset was created.", file=sys.stderr)
 
             output: object = result
-            if arguments.quality_report:
-                output = {"candles": result, "quality_report": quality_report}
+            if arguments.quality_report or arguments.import_postgres:
+                output_data: dict[str, object] = {
+                    "candles": result,
+                    "quality_report": quality_report,
+                }
+                if import_report is not None:
+                    output_data["postgres_import"] = import_report.as_dict()
+                output = output_data
             print(json.dumps(output, indent=2))
+            if import_report is not None:
+                return int(
+                    quality_report["validation_status"] == "invalid"
+                    or import_report.conflicting > 0
+                    or import_report.rejected > 0
+                    or save_rejected
+                )
+            if save_rejected:
+                return 1
         return 0
     except (OAuthError, CTraderError) as error:
+        print(f"cTrader: {error}", file=sys.stderr)
+        return 1
+    except (OSError, SQLAlchemyError, ValueError) as error:
         print(f"cTrader: {error}", file=sys.stderr)
         return 1
 

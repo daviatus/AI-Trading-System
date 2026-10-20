@@ -94,6 +94,37 @@ ctrader candles --instrument EURUSD --environment demo --start 2026-06-01T00:00:
 
 Parquet output uses the repository's versioned OHLCV schema and Hive-style `instrument=EURUSD/timeframe=1m/year=YYYY/month=MM/part-000.parquet` partitions, with UTC timestamps, Decimal OHLCV, and cTrader demo lineage metadata. Only candles that pass validation are saved. Empty results create no files. An existing output root is never merged or replaced, and a failed write is staged outside the published root and cleaned up.
 
+PostgreSQL writes are also opt-in. Add `--import-postgres` to a retrieval command to validate the complete response and then import it into the existing `ohlcv_candles` table. Without that flag, retrieval never opens a database connection. The source is recorded as `ctrader_open_api_demo`, separate from `histdata_generic_ascii`; repeated identical imports are unchanged, and conflicting existing OHLCV values are reported without being overwritten:
+
+```powershell
+ctrader candles --instrument EURUSD --environment demo --start 2026-06-01T00:00:00Z --end 2026-06-01T00:05:00Z --import-postgres
+```
+
+An already saved cTrader Parquet dataset can be imported without another cTrader request. Parquet schema, source, instrument, timeframe, timestamps, OHLCV and ordering are revalidated first; imports beyond 31 days or datasets containing a different source are refused. Original Parquet files are read only:
+
+```powershell
+ctrader import-parquet --input .\data\ctrader-june
+```
+
+Both explicit import workflows return `postgres_import` counts for `seen`, `inserted`, `unchanged`, `conflicting` and `rejected`. Conflicts and rejected records produce a nonzero exit status; records with conflicting values are never updated. PostgreSQL uniqueness remains scoped to instrument, timeframe, UTC open time, source provider and price type, so cTrader records do not replace HistData records. No migration is required: those source-aware columns and constraints already exist.
+
+For a safe manual integration check, use an isolated disposable PostgreSQL container on a separate port, never the project's configured database:
+
+```powershell
+$container = docker run -d --rm --name ctrader-import-test `
+  -e POSTGRES_USER=trading -e POSTGRES_PASSWORD=temporary-test-only `
+  -e POSTGRES_DB=trading -p 127.0.0.1:55432:5432 postgres:16.8
+$env:DATABASE_URL = "postgresql+psycopg://trading:temporary-test-only@localhost:55432/trading"
+alembic upgrade head
+ctrader import-parquet --input .\data\ctrader-june
+ctrader import-parquet --input .\data\ctrader-june
+docker exec ctrader-import-test psql -U trading -d trading -c "SELECT source_provider, COUNT(*) FROM ohlcv_candles GROUP BY source_provider"
+docker stop $container
+Remove-Item Env:DATABASE_URL
+```
+
+Use a Parquet dataset created by the explicit cTrader save option. The second import should report unchanged rows, and the query should show the cTrader provider independently of any other source. Do not point `DATABASE_URL` at a personal, shared, or production database for this test.
+
 If a server response contains a candle outside the requested interval, validation remains strict and fails rather than discarding it. Add `--diagnostics` to print the requested UTC bounds, request timestamps/count, response count, and offending candle timestamp to stderr for troubleshooting. It does not print account identifiers, credentials, or payload contents.
 
 ## cTrader Copy History exporter
