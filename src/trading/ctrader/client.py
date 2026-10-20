@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+import sys
 import uuid
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
@@ -13,6 +14,10 @@ from trading.data.domain import Candle, InstrumentCode, PriceType, Timeframe
 DEMO_WEBSOCKET_URL = "wss://demo.ctraderapi.com:5036"
 DEFAULT_MAX_MESSAGE_SIZE_BYTES = 8 * 1024 * 1024
 MAX_ALLOWED_MESSAGE_SIZE_BYTES = 16 * 1024 * 1024
+MAX_MULTI_DAY_CANDLE_DURATION = timedelta(days=31)
+MAX_CANDLE_CHUNK_ATTEMPTS = 3
+BASE_CANDLE_RETRY_DELAY_SECONDS = 1.0
+MAX_CANDLE_RETRY_DELAY_SECONDS = 60.0
 APPLICATION_AUTH = (2100, 2101)
 ACCOUNT_AUTH = (2102, 2103)
 SYMBOLS_LIST = (2114, 2115)
@@ -70,6 +75,12 @@ READ_ONLY_MESSAGES = {
 
 class CTraderError(Exception):
     """Sanitized error raised by the read-only cTrader client."""
+
+
+class _RetryableCTraderError(CTraderError):
+    def __init__(self, message: str, retry_after_seconds: int | None = None) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
 
 
 class CTraderReadOnlyClient:
@@ -208,6 +219,8 @@ class CTraderReadOnlyClient:
         start: datetime,
         end: datetime,
         account_id: int | None = None,
+        *,
+        diagnostics: bool = False,
     ) -> list[dict]:
         start, end = _validate_candle_range(start, end)
         symbol_metadata = await self.discover_eurusd(account_id)
@@ -224,6 +237,8 @@ class CTraderReadOnlyClient:
                 {"ctidTraderAccountId": selected_id, "accessToken": self._access_token},
             )
             _verify_account_authorization(account_auth, selected_id)
+            # count limits bars backward from toTimestamp; omit it to keep sparse
+            # ranges bounded by fromTimestamp.
             response = await self._request(
                 websocket,
                 *TRENDBARS,
@@ -233,7 +248,6 @@ class CTraderReadOnlyClient:
                     "toTimestamp": int(end.timestamp()) * 1000 - 1,
                     "period": Timeframe.M1.value,
                     "symbolId": symbol_id,
-                    "count": int((end - start).total_seconds() // 60),
                 },
                 diagnostic_context={
                     "account_auth_completed": True,
@@ -256,7 +270,76 @@ class CTraderReadOnlyClient:
             start,
             end,
             digits,
+            diagnostics=diagnostics,
         )
+
+    async def get_eurusd_m1_candles_multi_day(
+        self,
+        start: datetime,
+        end: datetime,
+        account_id: int | None = None,
+        *,
+        diagnostics: bool = False,
+    ) -> list[dict]:
+        start, end = _validate_candle_range(
+            start,
+            end,
+            max_duration=MAX_MULTI_DAY_CANDLE_DURATION,
+        )
+        candles = []
+        seen_timestamps = set()
+        previous_timestamp = None
+        chunk_start = start
+        while chunk_start < end:
+            chunk_end = min(chunk_start + MAX_CANDLE_REQUEST_INTERVAL, end)
+            for attempt in range(MAX_CANDLE_CHUNK_ATTEMPTS):
+                try:
+                    chunk = await self.get_eurusd_m1_candles(
+                        chunk_start,
+                        chunk_end,
+                        account_id,
+                        diagnostics=diagnostics,
+                    )
+                    break
+                except _RetryableCTraderError as error:
+                    if attempt + 1 >= MAX_CANDLE_CHUNK_ATTEMPTS:
+                        raise
+                    delay = max(
+                        BASE_CANDLE_RETRY_DELAY_SECONDS * (2**attempt),
+                        float(error.retry_after_seconds or 0),
+                    )
+                    if delay > MAX_CANDLE_RETRY_DELAY_SECONDS:
+                        raise
+                    print(
+                        "cTrader: retrying historical candle chunk "
+                        f"(attempt={attempt + 2}/{MAX_CANDLE_CHUNK_ATTEMPTS}, "
+                        f"delay_seconds={delay:g})",
+                        file=sys.stderr,
+                    )
+                    await self._sleep(delay)
+
+            for candle in chunk:
+                if not isinstance(candle, Mapping):
+                    raise CTraderError(
+                        "cTrader returned a malformed candle entry (stage=historical_trendbars)"
+                    )
+                timestamp = _candle_timestamp(candle)
+                if timestamp in seen_timestamps:
+                    raise CTraderError(
+                        "cTrader returned duplicate candles during multi-day retrieval "
+                        "(stage=historical_trendbars)"
+                    )
+                if previous_timestamp is not None and timestamp < previous_timestamp:
+                    raise CTraderError(
+                        "cTrader returned candles out of chronological order "
+                        "during multi-day retrieval "
+                        "(stage=historical_trendbars)"
+                    )
+                seen_timestamps.add(timestamp)
+                previous_timestamp = timestamp
+                candles.append(candle)
+            chunk_start = chunk_end
+        return candles
 
     async def _authenticate_application(self, websocket) -> None:
         await self._request(
@@ -290,19 +373,25 @@ class CTraderReadOnlyClient:
                     timeout=self._request_timeout,
                 )
         except TimeoutError as error:
-            raise CTraderError(
+            raise _RetryableCTraderError(
                 "cTrader request send timed out "
                 f"(stage={stage}, request_payload_type={request_type}, "
                 f"request_send_completed=false{context_text})"
             ) from error
         except websockets.ConnectionClosed as error:
             close_details = _close_metadata(error)
-            raise CTraderError(
+            raise _RetryableCTraderError(
                 "cTrader connection closed while sending a request "
                 f"(stage={stage}, request_payload_type={request_type}, "
                 f"request_send_completed=false, {close_details}{context_text})"
             ) from error
-        except (OSError, websockets.WebSocketException) as error:
+        except OSError as error:
+            raise _RetryableCTraderError(
+                "cTrader request send failed "
+                f"(stage={stage}, request_payload_type={request_type}, "
+                f"request_send_completed=false{context_text})"
+            ) from error
+        except websockets.WebSocketException as error:
             raise CTraderError(
                 "cTrader request send failed "
                 f"(stage={stage}, request_payload_type={request_type}, "
@@ -333,11 +422,20 @@ class CTraderReadOnlyClient:
                     "cTrader returned an invalid WebSocket message "
                     f"(expected_payload_type={response_type}, received_wire_type=unsupported)"
                 ) from error
-            except (
-                TimeoutError,
-                OSError,
-                UnicodeDecodeError,
-            ) as error:
+            except (TimeoutError, OSError) as error:
+                unmatched = ""
+                if last_payload_type is not None:
+                    unmatched = (
+                        f", last_response_payload_type={last_payload_type}, "
+                        f"last_response_correlation={last_correlation}"
+                    )
+                raise _RetryableCTraderError(
+                    "cTrader response wait timed out or failed "
+                    f"(stage={stage}, request_payload_type={request_type}, "
+                    f"request_send_completed=true, expected_payload_type={response_type}"
+                    f"{unmatched}{context_text})"
+                ) from error
+            except UnicodeDecodeError as error:
                 unmatched = ""
                 if last_payload_type is not None:
                     unmatched = (
@@ -358,7 +456,7 @@ class CTraderReadOnlyClient:
                         f", last_response_payload_type={last_payload_type}, "
                         f"last_response_correlation={last_correlation}"
                     )
-                raise CTraderError(
+                raise _RetryableCTraderError(
                     "cTrader connection closed while waiting for a response "
                     f"(stage={stage}, request_payload_type={request_type}, "
                     f"request_send_completed=true, expected_payload_type={response_type}, "
@@ -386,6 +484,13 @@ class CTraderReadOnlyClient:
                     f"received_json_type={type(actual_type).__name__})"
                 )
             if self._heartbeat_error is not None:
+                if isinstance(
+                    self._heartbeat_error,
+                    (OSError, TimeoutError, websockets.ConnectionClosed),
+                ):
+                    raise _RetryableCTraderError(
+                        "cTrader connection heartbeat failed"
+                    ) from self._heartbeat_error
                 raise CTraderError("cTrader connection heartbeat failed") from self._heartbeat_error
             response_id = response.get("clientMsgId")
             correlation = _correlation_status(response_id, client_message_id)
@@ -412,12 +517,26 @@ class CTraderReadOnlyClient:
                 correlation = "matched" if response_id == client_message_id else "absent"
                 if response_id is not None and response_id != client_message_id:
                     correlation = "mismatched"
-                raise CTraderError(
+                error_message = (
                     "cTrader returned an API error "
                     f"(stage={stage}, request_payload_type={request_type}, "
                     f"payload_type={actual_type}, error_code={safe_error_code}, "
                     f"client_msg_id={correlation}{context_text})"
                 )
+                if safe_error_code == "BLOCKED_PAYLOAD_TYPE":
+                    retry_after = (
+                        error_payload.get("retryAfter")
+                        if isinstance(error_payload, Mapping)
+                        else None
+                    )
+                    if (
+                        isinstance(retry_after, int)
+                        and not isinstance(retry_after, bool)
+                        and retry_after >= 0
+                    ):
+                        raise _RetryableCTraderError(error_message, retry_after) from None
+                    raise _RetryableCTraderError(error_message) from None
+                raise CTraderError(error_message)
             if response_id is not None and response_id != client_message_id:
                 continue
             if actual_type != response_type:
@@ -500,7 +619,10 @@ class _Connection:
                 last_error = error
                 if attempt + 1 < self._attempts:
                     await self._sleep(0.25 * (2**attempt))
-        raise CTraderError("Unable to connect to the cTrader demo API") from last_error
+        message = "Unable to connect to the cTrader demo API"
+        if isinstance(last_error, (OSError, TimeoutError, websockets.ConnectionClosed)):
+            raise _RetryableCTraderError(message) from last_error
+        raise CTraderError(message) from last_error
 
     async def __aexit__(self, exc_type, exc_value, traceback):
         if self._heartbeat_task is not None:
@@ -529,7 +651,12 @@ def _normalize_symbol(value: str) -> str:
     return "".join(character for character in value.upper() if character.isalnum())
 
 
-def _validate_candle_range(start: datetime, end: datetime) -> tuple[datetime, datetime]:
+def _validate_candle_range(
+    start: datetime,
+    end: datetime,
+    *,
+    max_duration: timedelta = MAX_CANDLE_REQUEST_INTERVAL,
+) -> tuple[datetime, datetime]:
     if not isinstance(start, datetime) or not isinstance(end, datetime):
         raise CTraderError("cTrader candle range must use timezone-aware UTC datetimes")
     if (
@@ -549,9 +676,30 @@ def _validate_candle_range(start: datetime, end: datetime) -> tuple[datetime, da
         raise CTraderError("cTrader candle range is outside the supported timestamp range")
     if start >= end:
         raise CTraderError("cTrader candle range start must be earlier than end")
-    if end - start > MAX_CANDLE_REQUEST_INTERVAL:
-        raise CTraderError("cTrader M1 requests are limited to a 24-hour UTC interval")
+    if end - start > max_duration:
+        if max_duration == MAX_CANDLE_REQUEST_INTERVAL:
+            raise CTraderError("cTrader M1 requests are limited to a 24-hour UTC interval")
+        raise CTraderError(f"cTrader M1 requests are limited to {max_duration.days} days")
     return start, end
+
+
+def _candle_timestamp(candle: Mapping) -> datetime:
+    value = candle.get("opened_at")
+    if not isinstance(value, str):
+        raise CTraderError(
+            "cTrader returned a candle with a malformed timestamp (stage=historical_trendbars)"
+        )
+    try:
+        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise CTraderError(
+            "cTrader returned a candle with a malformed timestamp (stage=historical_trendbars)"
+        ) from error
+    if timestamp.tzinfo is None or timestamp.utcoffset() != timedelta(0):
+        raise CTraderError(
+            "cTrader returned a candle with a non-UTC timestamp (stage=historical_trendbars)"
+        )
+    return timestamp.astimezone(UTC)
 
 
 def _verify_account_authorization(response: Mapping, selected_id: int) -> None:
@@ -599,6 +747,8 @@ def _decode_m1_trendbars(
     start: datetime,
     end: datetime,
     digits: int,
+    *,
+    diagnostics: bool = False,
 ) -> list[dict]:
     account_id = response.get("ctidTraderAccountId")
     if account_id is None:
@@ -642,6 +792,14 @@ def _decode_m1_trendbars(
                 "(stage=historical_trendbars, field=utcTimestampInMinutes)"
             )
         if not int(start.timestamp()) // 60 <= timestamp_minutes < int(end.timestamp()) // 60:
+            _report_trendbar_range_diagnostic(
+                diagnostics,
+                start,
+                end,
+                timestamp_minutes,
+                len(bars),
+                response.get("hasMore"),
+            )
             raise CTraderError(
                 "cTrader trendbar timestamp is outside the requested interval "
                 "(stage=historical_trendbars)"
@@ -696,6 +854,39 @@ def _decode_m1_trendbars(
         candle_data["opened_at"] = opened_at.isoformat().replace("+00:00", "Z")
         candles.append(candle_data)
     return candles
+
+
+def _report_trendbar_range_diagnostic(
+    enabled: bool,
+    start: datetime,
+    end: datetime,
+    offending_timestamp_minutes: int,
+    response_count: int,
+    has_more: object,
+) -> None:
+    if not enabled:
+        return
+    try:
+        offending_timestamp = datetime.fromtimestamp(
+            offending_timestamp_minutes * 60,
+            tz=UTC,
+        ).isoformat()
+    except (OSError, OverflowError, ValueError):
+        offending_timestamp = "unrepresentable"
+    safe_has_more = str(has_more).lower() if isinstance(has_more, bool) else "invalid"
+    print(
+        "cTrader trendbar range diagnostic "
+        f"(requested_start={start.isoformat()}, "
+        f"requested_end={end.isoformat()}, "
+        f"from_timestamp_ms={int(start.timestamp()) * 1000}, "
+        f"to_timestamp_ms={int(end.timestamp()) * 1000 - 1}, "
+        f"period=M1, count_parameter=omitted, "
+        f"requested_minute_slots={int((end - start).total_seconds() // 60)}, "
+        f"response_count={response_count}, has_more={safe_has_more}, "
+        f"offending_timestamp_minutes={offending_timestamp_minutes}, "
+        f"offending_timestamp={offending_timestamp})",
+        file=sys.stderr,
+    )
 
 
 def _account_id(value: object) -> int:

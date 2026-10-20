@@ -2,7 +2,7 @@ import argparse
 import asyncio
 import json
 import urllib.parse
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from websockets.exceptions import ConnectionClosedError
@@ -13,11 +13,14 @@ from trading.ctrader.client import (
     ACCOUNT_AUTH,
     ACCOUNT_LIST,
     APPLICATION_AUTH,
+    BASE_CANDLE_RETRY_DELAY_SECONDS,
     DEFAULT_MAX_MESSAGE_SIZE_BYTES,
     ERROR_RESPONSE,
     HEARTBEAT_EVENT,
     HEARTBEAT_INTERVAL_SECONDS,
     MAX_ALLOWED_MESSAGE_SIZE_BYTES,
+    MAX_CANDLE_CHUNK_ATTEMPTS,
+    MAX_MULTI_DAY_CANDLE_DURATION,
     OPEN_API_ERROR_RESPONSE,
     SYMBOL_BY_ID,
     SYMBOLS_LIST,
@@ -29,6 +32,7 @@ from trading.ctrader.client import (
     _close_metadata,
     _Connection,
     _heartbeat_message,
+    _RetryableCTraderError,
 )
 from trading.ctrader.oauth import (
     CTraderSecretStore,
@@ -1035,7 +1039,6 @@ def test_historical_m1_request_uses_discovered_demo_account_and_symbol():
         "toTimestamp": int(end.timestamp()) * 1000 - 1,
         "period": 1,
         "symbolId": 77,
-        "count": 2,
     }
     assert connector.urls == ["wss://demo.ctraderapi.com:5036"] * 2
     assert [candle["opened_at"] for candle in candles] == [
@@ -1057,6 +1060,84 @@ def test_historical_m1_empty_result_returns_empty_list():
     assert asyncio.run(client.get_eurusd_m1_candles(start, end)) == []
 
 
+@pytest.mark.parametrize("duration_hours", [18, 23, 24])
+def test_historical_m1_accepts_start_and_last_minute_of_longer_intervals(duration_hours):
+    start = datetime(2026, 1, 5, tzinfo=UTC)
+    end = start + timedelta(hours=duration_hours)
+    start_minutes = int(start.timestamp()) // 60
+    final_minute = int(end.timestamp()) // 60 - 1
+    client, websocket, _ = _candle_client([_trendbar(start_minutes), _trendbar(final_minute)])
+
+    candles = asyncio.run(client.get_eurusd_m1_candles(start, end))
+
+    assert [candle["opened_at"] for candle in candles] == [
+        start.isoformat().replace("+00:00", "Z"),
+        (end - timedelta(minutes=1)).isoformat().replace("+00:00", "Z"),
+    ]
+    request = next(message for message in websocket.sent if message["payloadType"] == TRENDBARS[0])
+    assert request["payload"]["fromTimestamp"] == int(start.timestamp()) * 1000
+    assert request["payload"]["toTimestamp"] == int(end.timestamp()) * 1000 - 1
+    assert "count" not in request["payload"]
+
+
+def test_historical_m1_rejects_end_boundary_and_reports_safe_diagnostics(capsys):
+    start = datetime(2026, 1, 5, tzinfo=UTC)
+    end = start + timedelta(hours=23)
+    offending_timestamp = int(end.timestamp()) // 60
+    client, _, _ = _candle_client([_trendbar(offending_timestamp)])
+
+    with pytest.raises(CTraderError, match="outside the requested interval"):
+        asyncio.run(client.get_eurusd_m1_candles(start, end, diagnostics=True))
+
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "requested_start=2026-01-05T00:00:00+00:00" in output.err
+    assert "requested_end=2026-01-05T23:00:00+00:00" in output.err
+    assert "response_count=1" in output.err
+    assert "requested_minute_slots=1380" in output.err
+    assert "count_parameter=omitted" in output.err
+    assert "offending_timestamp=2026-01-05T23:00:00+00:00" in output.err
+    assert "account_id" not in output.err
+    assert "client-secret" not in output.err
+
+
+def test_historical_m1_does_not_use_count_that_can_pull_bars_before_from_timestamp(capsys):
+    start = datetime(2026, 1, 5, tzinfo=UTC)
+    end = start + timedelta(hours=23)
+    first_returned_minute = int((start - timedelta(minutes=13)).timestamp()) // 60
+    response_bars = [_trendbar(first_returned_minute + offset) for offset in range(1380)]
+    client, websocket, _ = _candle_client(response_bars, has_more=True)
+
+    with pytest.raises(CTraderError, match="outside the requested interval"):
+        asyncio.run(client.get_eurusd_m1_candles(start, end, diagnostics=True))
+
+    request = next(message for message in websocket.sent if message["payloadType"] == TRENDBARS[0])
+    assert request["payload"] == {
+        "ctidTraderAccountId": 22,
+        "fromTimestamp": 1767571200000,
+        "toTimestamp": 1767653999999,
+        "period": 1,
+        "symbolId": 77,
+    }
+    assert "count" not in request["payload"]
+    diagnostic = capsys.readouterr().err
+    assert "response_count=1380" in diagnostic
+    assert "offending_timestamp=2026-01-04T23:47:00+00:00" in diagnostic
+
+
+def test_historical_m1_range_failure_is_silent_without_diagnostics(capsys):
+    start = datetime(2026, 1, 5, tzinfo=UTC)
+    end = start + timedelta(hours=23)
+    client, _, _ = _candle_client([_trendbar(int(end.timestamp()) // 60)])
+
+    with pytest.raises(CTraderError, match="outside the requested interval"):
+        asyncio.run(client.get_eurusd_m1_candles(start, end))
+
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err == ""
+
+
 def test_historical_m1_accepts_has_more_for_a_full_requested_interval():
     start = datetime(2026, 1, 5, 0, 0, tzinfo=UTC)
     end = datetime(2026, 1, 5, 0, 5, tzinfo=UTC)
@@ -1069,11 +1150,8 @@ def test_historical_m1_accepts_has_more_for_a_full_requested_interval():
     candles = asyncio.run(client.get_eurusd_m1_candles(start, end))
 
     assert len(candles) == 5
-    assert [
-        message["payload"]["count"]
-        for message in websocket.sent
-        if message["payloadType"] == TRENDBARS[0]
-    ] == [5]
+    request = next(message for message in websocket.sent if message["payloadType"] == TRENDBARS[0])
+    assert "count" not in request["payload"]
 
 
 def test_historical_m1_accepts_partial_response_and_market_gaps_with_has_more():
@@ -1092,11 +1170,8 @@ def test_historical_m1_accepts_partial_response_and_market_gaps_with_has_more():
         "2026-01-05T00:02:00Z",
         "2026-01-05T00:04:00Z",
     ]
-    assert [
-        message["payload"]["count"]
-        for message in websocket.sent
-        if message["payloadType"] == TRENDBARS[0]
-    ] == [5]
+    request = next(message for message in websocket.sent if message["payloadType"] == TRENDBARS[0])
+    assert "count" not in request["payload"]
 
 
 @pytest.mark.parametrize(
@@ -1202,3 +1277,316 @@ def test_candles_cli_requires_explicit_demo_instrument_and_utc_interval():
     assert args.start == datetime(2026, 1, 2, 3, 4, tzinfo=UTC)
     with pytest.raises(argparse.ArgumentTypeError):
         _parse_utc_datetime("2026-01-02T03:04:00")
+
+
+def _multi_day_candle(timestamp):
+    return {"opened_at": timestamp.isoformat().replace("+00:00", "Z")}
+
+
+def test_multi_day_candles_use_consecutive_non_overlapping_24_hour_chunks():
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = start + timedelta(days=2, minutes=5)
+    requests = []
+    client, _, _ = _client(_responses())
+
+    async def retrieve(chunk_start, chunk_end, account_id=None, *, diagnostics=False):
+        requests.append((chunk_start, chunk_end, account_id))
+        if chunk_start == start + timedelta(days=2):
+            return [_multi_day_candle(chunk_start)]
+        return []
+
+    client.get_eurusd_m1_candles = retrieve
+    candles = asyncio.run(client.get_eurusd_m1_candles_multi_day(start, end, 22))
+
+    assert requests == [
+        (start, start + timedelta(days=1), 22),
+        (start + timedelta(days=1), start + timedelta(days=2), 22),
+        (start + timedelta(days=2), end, 22),
+    ]
+    assert candles == [_multi_day_candle(start + timedelta(days=2))]
+
+
+def test_multi_day_candles_allow_weekend_gaps_without_synthesizing_bars():
+    start = datetime(2026, 1, 2, 23, 59, tzinfo=UTC)
+    end = datetime(2026, 1, 5, 0, 2, tzinfo=UTC)
+    expected = [
+        _multi_day_candle(start),
+        _multi_day_candle(datetime(2026, 1, 5, 0, 1, tzinfo=UTC)),
+    ]
+    calls = []
+    client, _, _ = _client(_responses())
+
+    async def retrieve(chunk_start, _chunk_end, _account_id=None, *, diagnostics=False):
+        calls.append(chunk_start)
+        if chunk_start == start:
+            return [expected[0]]
+        if chunk_start == datetime(2026, 1, 4, 23, 59, tzinfo=UTC):
+            return expected[1:]
+        return []
+
+    client.get_eurusd_m1_candles = retrieve
+    candles = asyncio.run(client.get_eurusd_m1_candles_multi_day(start, end))
+
+    assert calls == [
+        start,
+        start + timedelta(days=1),
+        start + timedelta(days=2),
+    ]
+    assert candles == expected
+
+
+def test_multi_day_candles_preserve_exact_24_hour_chunk_boundaries():
+    start = datetime(2026, 1, 5, tzinfo=UTC)
+    end = start + timedelta(hours=48)
+    chunk_requests = []
+    expected = []
+    client, _, _ = _client(_responses())
+
+    async def retrieve(chunk_start, chunk_end, _account_id=None, *, diagnostics=False):
+        chunk_requests.append((chunk_start, chunk_end))
+        candles = [
+            _multi_day_candle(chunk_start),
+            _multi_day_candle(chunk_end - timedelta(minutes=1)),
+        ]
+        expected.extend(candles)
+        return candles
+
+    client.get_eurusd_m1_candles = retrieve
+    candles = asyncio.run(client.get_eurusd_m1_candles_multi_day(start, end))
+
+    assert chunk_requests == [
+        (start, start + timedelta(days=1)),
+        (start + timedelta(days=1), end),
+    ]
+    assert [candle["opened_at"] for candle in candles] == [
+        "2026-01-05T00:00:00Z",
+        "2026-01-05T23:59:00Z",
+        "2026-01-06T00:00:00Z",
+        "2026-01-06T23:59:00Z",
+    ]
+    assert candles == expected
+
+
+def test_multi_day_candles_reject_duplicate_timestamps():
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = start + timedelta(days=1)
+    duplicate = _multi_day_candle(start)
+    client, _, _ = _client(_responses())
+
+    async def retrieve(_chunk_start, _chunk_end, _account_id=None, *, diagnostics=False):
+        return [duplicate, duplicate]
+
+    client.get_eurusd_m1_candles = retrieve
+    with pytest.raises(CTraderError, match="duplicate candles"):
+        asyncio.run(client.get_eurusd_m1_candles_multi_day(start, end))
+
+
+def test_multi_day_candles_reject_out_of_order_results():
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = start + timedelta(days=1)
+    client, _, _ = _client(_responses())
+
+    async def retrieve(_chunk_start, _chunk_end, _account_id=None, *, diagnostics=False):
+        return [
+            _multi_day_candle(start + timedelta(minutes=1)),
+            _multi_day_candle(start),
+        ]
+
+    client.get_eurusd_m1_candles = retrieve
+    with pytest.raises(CTraderError, match="chronological order"):
+        asyncio.run(client.get_eurusd_m1_candles_multi_day(start, end))
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "message"),
+    [
+        (
+            datetime(2026, 1, 2, tzinfo=UTC),
+            datetime(2026, 1, 1, tzinfo=UTC),
+            "earlier",
+        ),
+        (
+            datetime(2026, 1, 1, tzinfo=UTC),
+            datetime(2026, 1, 1, tzinfo=UTC) + MAX_MULTI_DAY_CANDLE_DURATION + timedelta(minutes=1),
+            "31 days",
+        ),
+        (
+            datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC),
+            datetime(2026, 1, 2, tzinfo=UTC),
+            "whole minutes",
+        ),
+        (
+            datetime(2026, 1, 1, tzinfo=None),
+            datetime(2026, 1, 2, tzinfo=UTC),
+            "UTC",
+        ),
+    ],
+)
+def test_multi_day_candles_reject_invalid_ranges(start, end, message):
+    client, _, _ = _client(_responses())
+    with pytest.raises(CTraderError, match=message):
+        asyncio.run(client.get_eurusd_m1_candles_multi_day(start, end))
+
+
+def test_multi_day_candles_retry_transient_failures_with_bounded_backoff(capsys):
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = start + timedelta(hours=1)
+    calls = []
+    delays = []
+    client, _, _ = _client(_responses())
+
+    async def record_sleep(delay):
+        delays.append(delay)
+
+    async def retrieve(_chunk_start, _chunk_end, _account_id=None, *, diagnostics=False):
+        calls.append(None)
+        if len(calls) < 3:
+            raise _RetryableCTraderError("temporary transport error")
+        return []
+
+    client._sleep = record_sleep
+    client.get_eurusd_m1_candles = retrieve
+    assert asyncio.run(client.get_eurusd_m1_candles_multi_day(start, end)) == []
+    assert len(calls) == 3
+    assert delays == [
+        BASE_CANDLE_RETRY_DELAY_SECONDS,
+        BASE_CANDLE_RETRY_DELAY_SECONDS * 2,
+    ]
+    assert "retrying historical candle chunk" in capsys.readouterr().err
+
+
+def test_multi_day_candles_stop_after_retry_exhaustion(capsys):
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = start + timedelta(hours=1)
+    calls = []
+    delays = []
+    client, _, _ = _client(_responses())
+
+    async def record_sleep(delay):
+        delays.append(delay)
+
+    async def retrieve(_chunk_start, _chunk_end, _account_id=None, *, diagnostics=False):
+        calls.append(None)
+        raise _RetryableCTraderError("temporary transport error")
+
+    client._sleep = record_sleep
+    client.get_eurusd_m1_candles = retrieve
+    with pytest.raises(_RetryableCTraderError):
+        asyncio.run(client.get_eurusd_m1_candles_multi_day(start, end))
+    assert len(calls) == MAX_CANDLE_CHUNK_ATTEMPTS
+    assert len(delays) == MAX_CANDLE_CHUNK_ATTEMPTS - 1
+    assert "attempt=3/3" in capsys.readouterr().err
+
+
+def test_multi_day_candles_do_not_retry_non_transient_errors():
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = start + timedelta(hours=1)
+    calls = []
+    client, _, _ = _client(_responses())
+
+    async def retrieve(_chunk_start, _chunk_end, _account_id=None, *, diagnostics=False):
+        calls.append(None)
+        raise CTraderError("invalid request")
+
+    client.get_eurusd_m1_candles = retrieve
+    with pytest.raises(CTraderError, match="invalid request"):
+        asyncio.run(client.get_eurusd_m1_candles_multi_day(start, end))
+    assert len(calls) == 1
+
+
+def test_rate_limit_response_retries_after_documented_retry_after(capsys):
+    class RateLimitedSocket(FakeWebSocket):
+        def __init__(self, responses):
+            super().__init__(responses)
+            self.trendbar_requests = 0
+
+        async def send(self, message):
+            request = json.loads(message)
+            if request["payloadType"] == TRENDBARS[0]:
+                self.sent.append(request)
+                self.trendbar_requests += 1
+                if self.trendbar_requests == 1:
+                    self.next_response = {
+                        "clientMsgId": request["clientMsgId"],
+                        "payloadType": OPEN_API_ERROR_RESPONSE,
+                        "payload": {
+                            "errorCode": "BLOCKED_PAYLOAD_TYPE",
+                            "retryAfter": 3,
+                        },
+                    }
+                    return
+            await super().send(message)
+
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = start + timedelta(minutes=1)
+    responses = _responses(
+        accounts=[{"ctidTraderAccountId": 22, "isLive": False}],
+        symbols=[{"symbolId": 77, "symbolName": "EURUSD"}],
+    )
+    websocket = RateLimitedSocket(responses)
+    delays = []
+
+    async def record_sleep(delay):
+        delays.append(delay)
+
+    client = CTraderReadOnlyClient(
+        "id",
+        "secret",
+        "token",
+        connect=FakeConnect(websocket),
+        sleep=record_sleep,
+    )
+    assert asyncio.run(client.get_eurusd_m1_candles_multi_day(start, end)) == []
+    assert websocket.trendbar_requests == 2
+    assert delays == [3]
+    assert "retrying historical candle chunk" in capsys.readouterr().err
+
+
+def test_cli_multi_day_flag_keeps_json_on_stdout_and_messages_on_stderr(
+    monkeypatch,
+    capsys,
+):
+    class FakeManager:
+        def __init__(self, _store):
+            pass
+
+        def credentials(self):
+            return "client-id", "client-secret"
+
+        def access_token(self):
+            return "access-token"
+
+    class FakeClient:
+        diagnostics_values = []
+
+        def __init__(self, *_args):
+            pass
+
+        async def get_eurusd_m1_candles_multi_day(self, *_args, **_kwargs):
+            self.diagnostics_values.append(_kwargs.get("diagnostics"))
+            return [{"opened_at": "2026-01-01T00:00:00Z"}]
+
+    from trading.ctrader import cli
+
+    monkeypatch.setattr(cli, "OAuthManager", FakeManager)
+    monkeypatch.setattr(cli, "CTraderReadOnlyClient", FakeClient)
+    exit_code = cli.main(
+        [
+            "candles",
+            "--instrument",
+            "EURUSD",
+            "--environment",
+            "demo",
+            "--start",
+            "2026-01-01T00:00:00Z",
+            "--end",
+            "2026-01-02T00:00:00Z",
+            "--multi-day",
+            "--diagnostics",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert json.loads(captured.out) == [{"opened_at": "2026-01-01T00:00:00Z"}]
+    assert captured.err == ""
+    assert FakeClient.diagnostics_values == [True]

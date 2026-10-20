@@ -75,6 +75,16 @@ ctrader candles --instrument EURUSD --environment demo --start 2026-06-01T00:00:
 
 The command treats the requested interval as half-open (`--start` included, `--end` excluded), requires an interval no longer than 24 hours, uses the selected demo account's discovered EURUSD symbol ID, and returns UTC JSON candles. Prices are decoded from cTrader's relative trendbar fields using `low + delta` and the protocol's 100000 price scale. `volume` is retained as cTrader's raw protocol integer because the trendbar schema does not define a conversion unit. This command makes a real demo API request; automated tests use mocks only.
 
+For multi-day ranges, opt in with `--multi-day`. Requests are split into consecutive, non-overlapping 24-hour UTC chunks, and the total range is capped at 31 days to bound API usage and memory. Existing calls without this flag retain the single-interval limit.
+
+```powershell
+ctrader candles --instrument EURUSD --environment demo --start 2026-06-01T00:00:00Z --end 2026-06-04T00:00:00Z --multi-day
+```
+
+The multi-day mode retries only transient transport failures and cTrader `BLOCKED_PAYLOAD_TYPE` rate limits, for up to three chunk attempts with exponential backoff. Existing connection setup also retains its bounded socket retries. A documented `retryAfter` delay is honored up to 60 seconds; longer delays and non-retryable errors are returned to the caller. Missing candles during market closures are valid. Duplicate timestamps or out-of-order results fail the request. Output remains JSON on stdout; retry and error messages go to stderr. Candle data is returned in memory only and is not persisted.
+
+If a server response contains a candle outside the requested interval, validation remains strict and fails rather than discarding it. Add `--diagnostics` to print the requested UTC bounds, request timestamps/count, response count, and offending candle timestamp to stderr for troubleshooting. It does not print account identifiers, credentials, or payload contents.
+
 ## cTrader Copy History exporter
 
 The read-only one-week, 20-trade-capped dry run and interactive DOM diagnostic

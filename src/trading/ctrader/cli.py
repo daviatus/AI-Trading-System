@@ -31,6 +31,16 @@ def _parser() -> argparse.ArgumentParser:
     candles.add_argument("--start", type=_parse_utc_datetime, required=True)
     candles.add_argument("--end", type=_parse_utc_datetime, required=True)
     candles.add_argument("--account-id", type=int)
+    candles.add_argument(
+        "--multi-day",
+        action="store_true",
+        help="Split a longer range into 24-hour chunks (maximum 31 days)",
+    )
+    candles.add_argument(
+        "--diagnostics",
+        action="store_true",
+        help="Print safe timestamp metadata to stderr if a candle is outside the requested range",
+    )
     return parser
 
 
@@ -68,12 +78,22 @@ def main(argv: list[str] | None = None) -> int:
             result = asyncio.run(client.list_demo_accounts())
         elif arguments.command == "symbols":
             result = asyncio.run(client.discover_eurusd(arguments.account_id))
+        elif arguments.multi_day:
+            result = asyncio.run(
+                client.get_eurusd_m1_candles_multi_day(
+                    arguments.start,
+                    arguments.end,
+                    arguments.account_id,
+                    diagnostics=arguments.diagnostics,
+                )
+            )
         else:
             result = asyncio.run(
                 client.get_eurusd_m1_candles(
                     arguments.start,
                     arguments.end,
                     arguments.account_id,
+                    diagnostics=arguments.diagnostics,
                 )
             )
         print(json.dumps(result, indent=2))
