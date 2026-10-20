@@ -21,6 +21,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+ctrader = [
+    "keyring>=25,<26",
+    "websockets>=13,<18",
+]
 dev = [
     "httpx>=0.28,<1",
     "pytest>=8.3,<9",
@@ -36,6 +40,7 @@ analytics = [
 
 [project.scripts]
 ctrader-copy-exporter = "tools.ctrader_copy_exporter.cli:main"
+ctrader = "trading.ctrader.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src", "."]

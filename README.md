@@ -2,7 +2,7 @@
 
 The foundation includes PostgreSQL, Alembic migrations, structured logs, and liveness/readiness endpoints. The market data layer adds asynchronous historical and streaming provider contracts, CSV imports, deterministic synthetic data, OHLCV validation, gap reporting, PostgreSQL persistence, and resumable ingestion. Phase 2B adds session-aware quality analysis, finalized-only 1m-to-5m aggregation, versioned partitioned Parquet storage, and causal ML dataset preparation.
 
-Trading mode defaults to `DEMO`. Configuration only accepts `DEMO` or `SIMULATION`; enabling `LIVE_EXECUTION_ENABLED` or selecting `LIVE` is rejected. The cTrader adapter is an inert skeleton while application approval is pending and performs no authentication or network requests. No orders, broker credentials, model training, or strategy optimization are implemented.
+Trading mode defaults to `DEMO`. Configuration only accepts `DEMO` or `SIMULATION`; enabling `LIVE_EXECUTION_ENABLED` or selecting `LIVE` is rejected. The cTrader integration is limited to explicit, read-only demo account and symbol discovery. It cannot place orders or modify positions. No credentials are stored in source code; model training and strategy optimization are out of scope.
 
 ## Requirements
 
@@ -41,6 +41,31 @@ ruff check .
 ```
 
 Health endpoint tests replace the database probe and do not require Docker or broker credentials.
+
+## cTrader Open API (read-only, DEMO only)
+
+The optional cTrader CLI uses the Open API JSON-over-WebSocket endpoint for demo accounts. It requests only the OAuth `accounts` scope, rejects live accounts, and does not write to PostgreSQL or Parquet. The official Twisted SDK currently requires a Windows native build dependency in this environment, so this integration uses the documented JSON protocol with the bounded `websockets` dependency instead.
+
+The cTrader WebSocket receive limit defaults to 8 MiB for symbol-list responses and is bounded to 16 MiB. Library callers may configure `max_message_size_bytes` when constructing `CTraderReadOnlyClient`; the limit cannot be disabled.
+
+Install the optional dependencies and store the application credentials in Windows Credential Manager through the OS keyring:
+
+```powershell
+python -m pip install -e ".[ctrader]"
+ctrader configure
+```
+
+The Client ID is entered visibly at the prompt; the Client Secret is entered with hidden input. Neither is written to `.env` or printed. Run OAuth only when ready to authorize the application; it opens the cTrader authorization page, requests `accounts` access, validates a random OAuth state at `http://localhost:8080/callback`, exchanges the short-lived code, and stores tokens in the OS credential vault. If the callback listener/browser flow is unavailable, use the displayed authorization URL and paste the full callback URL at the hidden terminal prompt. Never use cTrader Playground Sandbox tokens as application OAuth credentials.
+
+After explicit operator approval for a real read-only connection, these commands perform demo-only API calls:
+
+```powershell
+ctrader auth
+ctrader accounts --environment demo
+ctrader symbols --instrument EURUSD --environment demo
+```
+
+If more than one demo account is accessible, `ctrader symbols` requires an explicit `--account-id`; it will not fall back to a live account. Symbol discovery reports the broker's observed EURUSD name, ID, account association and precision without persisting a mapping. No OAuth login or live API request is run by automated tests.
 
 ## cTrader Copy History exporter
 
