@@ -139,6 +139,60 @@ Remove-Item Env:DATABASE_URL
 
 Never use a personal, shared, or production database for write testing. Automated tests use in-memory fakes and do not connect to PostgreSQL or cTrader.
 
+### Phase 3D: foreground DEMO candle worker
+
+The worker runs in the foreground, performs a synchronization immediately, then uses monotonic deadlines for subsequent cycles. It is sequential and never overlaps runs. The default interval is 300 seconds and the rolling lookback is 24 hours; interval, lookback, retry delays, and quality thresholds are configurable. The reused Phase 3C synchronizer currently supports EURUSD M1 only, and the worker explicitly exposes those instrument/timeframe options. It handles Ctrl+C and SIGTERM where available. It does not install a service, schedule a Windows task, start automatically, or call a trading/order API.
+
+The worker requires `DATABASE_URL` to be explicitly configured with a PostgreSQL host and database; it refuses the application's fallback database target. Set the variable only after verifying that it points to the intended disposable or approved database. Candle writes and persistent worker reports are disabled by default; `--save-postgres` is the explicit opt-in for both. `--dry-run` reads the selected database to report the plan, but does not call cTrader or write candles, retry state, or reports. It cannot be combined with `--save-postgres`. The worker never modifies `.env`.
+
+With the development environment active, configure and migrate a disposable database first, then inspect a one-shot plan:
+
+```powershell
+$env:POSTGRES_PASSWORD = "temporary-test-only"
+$env:DATABASE_URL = "postgresql+psycopg://trading" + ":" + $env:POSTGRES_PASSWORD + "@127.0.0.1:55432/trading"
+alembic upgrade head
+ctrader worker --instrument EURUSD --environment demo --timeframe M1 --once --dry-run --json
+```
+
+After reviewing the target and plan, a real one-shot DEMO synchronization requires configured cTrader DEMO credentials and explicit write opt-in:
+
+```powershell
+ctrader worker --instrument EURUSD --environment demo --timeframe M1 --once --save-postgres --json
+ctrader status --json
+```
+
+To keep collecting in the current PowerShell window, omit `--once`; stop cleanly with Ctrl+C:
+
+```powershell
+ctrader worker --instrument EURUSD --environment demo --timeframe M1 --interval-seconds 300 --lookback-hours 24 --save-postgres
+```
+
+`ctrader status` (also available as `ctrader report`) reads the most recent persisted run, last successful synchronization, candle freshness, missing gaps, and API/database/rejection counts. Persistent reports and the retry snapshot use the existing append-only `system_events` table, so Phase 3D adds no database migration. A run without `--save-postgres` is intentionally not persisted and will not appear in status.
+
+Retries for broker-empty minutes use persistent exponential backoff (default 15 minutes, capped at 6 hours); retry intervals can be changed with `--retry-base-seconds` and `--retry-max-seconds`. Deferred minutes remain visible as missing gaps in each report. The existing manual `ctrader sync` command ignores worker retry state, and `--manual-backfill` bypasses retry timers on a worker cycle. A weekday gap is never classified as a market closure just because cTrader did not return it. The existing DST-aware weekend calendar remains in force; daily rollover minutes are still requested. The six confirmed Jan 5–6, 2026 rollover candles are not excluded.
+
+Quality status is `healthy`, `warning`, or `critical`. Any API/database error, rejected/conflicting record, at least `--critical-missing-minutes` missing candles (default 30), or market-open ingestion lag greater than `--max-lag-minutes` (default 10) is critical. Missing candles above `--warning-missing-minutes` (default 1) are warning-level, so the known six-candle rollover gap does not cause an endless critical alert. `--warning-missing-minutes`, `--critical-missing-minutes`, and `--max-lag-minutes` can be adjusted to the operator's tolerance; the configured weekend closure is excluded from market-open lag.
+
+For manual PostgreSQL verification, start an isolated database on loopback and remove it when finished. The dry-run below needs no cTrader login; the write-enabled command does contact the DEMO history API:
+
+```powershell
+docker run -d --rm --name ctrader-worker-test `
+  -e POSTGRES_USER=trading -e POSTGRES_PASSWORD=temporary-test-only `
+  -e POSTGRES_DB=trading -p 127.0.0.1:55432:5432 postgres:16
+$env:POSTGRES_PASSWORD = "temporary-test-only"
+$env:DATABASE_URL = "postgresql+psycopg://trading" + ":" + $env:POSTGRES_PASSWORD + "@127.0.0.1:55432/trading"
+alembic upgrade head
+ctrader worker --instrument EURUSD --environment demo --timeframe M1 --once --dry-run --json
+# Only after verifying the disposable target and approving a DEMO API read:
+ctrader worker --instrument EURUSD --environment demo --timeframe M1 --once --save-postgres --json
+ctrader status --json
+docker stop ctrader-worker-test
+Remove-Item Env:DATABASE_URL
+Remove-Item Env:POSTGRES_PASSWORD
+```
+
+Do not point this verification at the project's normal PostgreSQL database. For a future Linux/Docker deployment, provide the approved `DATABASE_URL` and cTrader credentials through the deployment's secret manager, run the same worker command as the container's foreground process, and let the orchestrator send SIGTERM; no container or service deployment is part of this phase.
+
 For a safe manual integration check, use an isolated disposable PostgreSQL container on a separate port, never the project's configured database:
 
 ```powershell

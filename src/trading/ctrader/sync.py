@@ -190,14 +190,20 @@ class CTraderSyncService:
         max_days: int = MAX_SYNC_DAYS,
         dry_run: bool = False,
         save_postgres: bool = False,
+        deferred_timestamps: set[datetime] | None = None,
     ) -> dict[str, object]:
         plan = self.build_plan(start, end, max_days=max_days)
+        deferred = set(deferred_timestamps or ()) & set(plan.missing_timestamps)
+        intervals_to_fetch = _build_missing_intervals(
+            [timestamp for timestamp in plan.missing_timestamps if timestamp not in deferred]
+        )
         result: dict[str, object] = plan.as_dict()
         result.update(
             {
                 "api_requests_attempted": 0,
                 "candles_retrieved": 0,
                 "candles_validated": 0,
+                "duplicate_records": 0,
                 "candles_inserted": 0,
                 "unchanged_records": 0,
                 "conflicts": 0,
@@ -210,6 +216,14 @@ class CTraderSyncService:
         if dry_run:
             result["status"] = "dry_run"
             return result
+        if deferred:
+            result["unresolved_gaps"] = _gap_entries(
+                sorted(deferred),
+                "retry_deferred",
+            )
+        if not intervals_to_fetch:
+            result["status"] = "incomplete" if deferred else "complete"
+            return result
         if not plan.missing_timestamps:
             result["status"] = "complete"
             return result
@@ -220,6 +234,7 @@ class CTraderSyncService:
         retrieved_count = 0
         validated_count = 0
         rejected_count = 0
+        duplicate_count = 0
         fetched_by_timestamp: dict[datetime, tuple[Candle, str]] = {}
         unresolved: list[dict[str, object]] = []
         api_errors: list[str] = []
@@ -228,7 +243,7 @@ class CTraderSyncService:
             nonlocal request_count
             request_count += 1
 
-        for interval in plan.missing_intervals:
+        for interval in intervals_to_fetch:
             try:
                 data = await self.client.get_eurusd_m1_candles_multi_day(
                     interval.start,
@@ -245,6 +260,7 @@ class CTraderSyncService:
 
             retrieved_count += len(data)
             valid_candles, quality = validate_candle_data(data, interval.start, interval.end)
+            duplicate_count += int(quality["duplicate_count"])
             wrong_identity = [
                 candle
                 for candle in valid_candles
@@ -291,6 +307,7 @@ class CTraderSyncService:
         result["api_requests_attempted"] = request_count
         result["candles_retrieved"] = retrieved_count
         result["candles_validated"] = validated_count
+        result["duplicate_records"] = duplicate_count
         result["rejected_records"] = rejected_count
         result["api_errors"] = api_errors
 
@@ -322,7 +339,7 @@ class CTraderSyncService:
                 )
             )
 
-        result["unresolved_gaps"] = unresolved + result["unresolved_gaps"]
+        result["unresolved_gaps"] = result["unresolved_gaps"] + unresolved
         has_conflicts = bool(result["conflicts"] or result["rejected_records"])
         if not save_postgres and fetched_by_timestamp and not unresolved and not has_conflicts:
             result["status"] = "retrieved_not_saved"
