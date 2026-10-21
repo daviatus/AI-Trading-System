@@ -117,7 +117,11 @@ def run_foreground_worker(
         if deadline <= current:
             missed_intervals = int((current - deadline) // interval_seconds) + 1
             deadline += missed_intervals * interval_seconds
-        wait_for_stop(max(0.0, deadline - monotonic()))
+        while not stop.is_set():
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                break
+            wait_for_stop(min(0.2, remaining))
 
 
 async def synchronize_worker_cycle(
