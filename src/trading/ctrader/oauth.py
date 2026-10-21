@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlsplit
 
+from trading.ctrader import encrypted_store
+
 AUTHORIZATION_URL = "https://id.ctrader.com/my/settings/openapi/grantingaccess/"
 TOKEN_URL = "https://openapi.ctrader.com/apps/token"
 REDIRECT_URI = "http://localhost:8080/callback"
@@ -79,6 +81,11 @@ class CTraderSecretStore:
     def __init__(self, backend=None) -> None:
         if backend is None:
             try:
+                backend = encrypted_store.backend_from_environment()
+            except encrypted_store.EncryptedStoreError as error:
+                raise OAuthError(str(error)) from error
+        if backend is None:
+            try:
                 backend = importlib.import_module("keyring")
             except ImportError as error:
                 raise OAuthError(
@@ -86,17 +93,26 @@ class CTraderSecretStore:
                 ) from error
         self._backend = backend
 
+    def _description(self) -> str:
+        if isinstance(self._backend, encrypted_store.EncryptedFileBackend):
+            return "encrypted credential file"
+        return "Windows credential store"
+
     def get(self, key: str) -> str | None:
         try:
             return self._backend.get_password(self.SERVICE, key)
+        except encrypted_store.EncryptedStoreError as error:
+            raise OAuthError(str(error)) from error
         except Exception as error:
-            raise OAuthError("Unable to read the Windows credential store") from error
+            raise OAuthError(f"Unable to read the {self._description()}") from error
 
     def set(self, key: str, value: str) -> None:
         try:
             self._backend.set_password(self.SERVICE, key, value)
+        except encrypted_store.EncryptedStoreError as error:
+            raise OAuthError(str(error)) from error
         except Exception as error:
-            raise OAuthError("Unable to write the Windows credential store") from error
+            raise OAuthError(f"Unable to write the {self._description()}") from error
 
 
 def build_authorization_url(client_id: str, state: str) -> str:

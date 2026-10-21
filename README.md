@@ -57,6 +57,23 @@ ctrader configure
 
 The Client ID is entered visibly at the prompt; the Client Secret is entered with hidden input. Neither is written to `.env` or printed. Run OAuth only when ready to authorize the application; it opens the cTrader authorization page, requests `accounts` access, validates a random OAuth state at `http://localhost:8080/callback`, exchanges the short-lived code, and stores tokens in the OS credential vault. If the callback listener/browser flow is unavailable, use the displayed authorization URL and paste the full callback URL at the hidden terminal prompt. Never use cTrader Playground Sandbox tokens as application OAuth credentials.
 
+### Encrypted file credential store (Linux Docker, opt-in)
+
+Windows Credential Manager remains the default. For Linux/Docker set `CTRADER_CREDENTIAL_BACKEND=encrypted-file`, `CTRADER_CREDENTIAL_FILE` (data path) and `CTRADER_CREDENTIAL_KEY_FILE` (key path). Credentials and refreshed OAuth tokens are stored as one Fernet (authenticated-encryption) file, written atomically with mode `0600`. The key must live in a separate file, never in an environment variable, Compose file, argument or the data volume.
+
+Initialise the key once on the host (nothing is printed; refuses to overwrite):
+
+```bash
+install -d -m 700 ./secrets
+python -c "from trading.ctrader.encrypted_store import init_key_file; init_key_file('./secrets/ctrader_credential_key')"
+```
+
+Mount the key as a Docker secret or read-only bind mount (for example at `/run/secrets/ctrader_credential_key`) and the data directory as a dedicated named volume (for example `/var/lib/ctrader`, not group/other writable). Run `ctrader configure` and `ctrader auth` inside the container (or any environment with the same variables) once to populate it. Keep `secrets/` out of git and back the key up separately from the data volume.
+
+The store fails closed, with no plaintext fallback, on a missing/invalid key, wrong key, corrupted or tampered data, a data file readable by group/other, a symlinked or non-regular file, or any I/O error. The key file may be read-only/world-readable (Docker secrets default to `0444`) but not group/other writable.
+
+Recovery: if the key is lost or the data is corrupted, the stored credentials cannot be recovered. Delete the data file (and `.lock`) deliberately, create a new key with `init_key_file`, then re-run `ctrader configure` and `ctrader auth`. Rotate the cTrader client secret if the key or data may have been exposed. Never delete the key while the data file is still needed.
+
 After explicit operator approval for a real read-only connection, these commands perform demo-only API calls:
 
 ```powershell

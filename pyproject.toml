@@ -22,6 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 ctrader = [
+    "cryptography>=42,<48",
     "keyring>=25,<26",
     "websockets>=13,<18",
 ]
