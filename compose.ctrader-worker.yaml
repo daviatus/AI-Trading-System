@@ -26,15 +26,24 @@ services:
       CTRADER_CREDENTIAL_FILE: /var/lib/ctrader/credentials.enc
       CTRADER_CREDENTIAL_KEY_FILE: /run/secrets/ctrader_credential_key
       DATABASE_URL_FILE: /run/secrets/ctrader_worker_database_url
+      CTRADER_SECRET_SOURCE_DIR: /run/host-secrets
+      CTRADER_EXPECTED_DATABASE: ${CTRADER_EXPECTED_DATABASE:?set the isolated database name}
+      CTRADER_EXPECTED_USER: ${CTRADER_EXPECTED_USER:?set the isolated database user}
+      CTRADER_EXPECTED_CLUSTER_ID: ${CTRADER_EXPECTED_CLUSTER_ID:?set the verified cluster identity}
       TRADING_MODE: DEMO
       LIVE_EXECUTION_ENABLED: "false"
     volumes:
       - ctrader_credentials:/var/lib/ctrader
+    networks:
+      - isolated_test
     tmpfs:
       - /tmp
+      - /run/secrets:rw,noexec,nosuid,nodev,size=64k,mode=0700,uid=10001,gid=10001
     secrets:
-      - ctrader_credential_key
-      - ctrader_worker_database_url
+      - source: ctrader_credential_key
+        target: /run/host-secrets/ctrader_credential_key
+      - source: ctrader_worker_database_url
+        target: /run/host-secrets/ctrader_worker_database_url
 
 secrets:
   ctrader_credential_key:
@@ -44,3 +53,8 @@ secrets:
 
 volumes:
   ctrader_credentials:
+
+networks:
+  isolated_test:
+    external: true
+    name: ${CTRADER_WORKER_NETWORK_NAME:?set the existing isolated test network}

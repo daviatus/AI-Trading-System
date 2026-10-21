@@ -78,7 +78,7 @@ Recovery: if the key is lost or the data is corrupted, the stored credentials ca
 
 `compose.ctrader-worker.yaml` is a standalone project (`ai-trading-ctrader-worker`) that supervises `ctrader worker` every 300 seconds with `--save-postgres` for EURUSD M1 on the DEMO environment. It never uses `compose.yaml`, defines no database, publishes no ports and cannot place orders. It runs as non-root UID 10001 with a read-only root filesystem, `restart: unless-stopped`, SIGTERM and a 90 s `stop_grace_period`.
 
-The worker refuses to start (worker exit 2, no secret echoed) unless `DATABASE_URL` points to an explicit PostgreSQL host, database **and port other than 5432**, the encrypted backend, key and credential store are valid, client ID/secret and OAuth access/refresh tokens are present, `TRADING_MODE` is `DEMO` and `LIVE_EXECUTION_ENABLED` is false. Startup checks decrypt and validate stored data locally before invoking the worker CLI; they never refresh tokens or connect to a service. Expired access tokens with valid refresh data are accepted for the worker's normal refresh flow. The database URL is supplied only as a secret file; use an address reachable from the container (for example the isolated test database's host IP and published port). `host.docker.internal` is not assumed.
+The worker refuses to start (worker exit 2, no secret echoed) unless `DATABASE_URL` points to an explicit PostgreSQL host, database **and port other than 5432**, the encrypted backend, key and credential store are valid, client ID/secret and OAuth access/refresh tokens are present, `TRADING_MODE` is `DEMO` and `LIVE_EXECUTION_ENABLED` is false. Startup checks decrypt and validate stored data locally before invoking the worker CLI; they never refresh tokens. The standalone deployment also requires the expected database name, user and PostgreSQL cluster system identifier. Before the CLI can write, a read-only connection verifies these values exclusively through `host.docker.internal:15432`; URL query overrides, a different host/port/user/database and identity mismatches fail closed with exit 2. An unavailable identity check exits 1 for Docker recovery. Expired access tokens with valid refresh data are accepted for the worker's normal refresh flow. The database URL is supplied only as a secret file; use an address reachable from the container (for example the isolated test database's host IP and published port). The standalone Compose deployment is pinned to that Docker Desktop route; the reusable CLI remains separately configurable.
 
 The image entrypoint is a small Python supervisor; `worker_entrypoint` remains the child that validates and runs the worker. Docker is the only restart authority. The supervisor launches the child once and passes through ordinary exits (including unexpected exit 0 and signal deaths), so `unless-stopped` retains automatic crash recovery, Docker's restart backoff and daemon-restart recovery. There is no second retry loop, Docker socket access, external service or new dependency. See [Docker restart policy documentation](https://docs.docker.com/engine/containers/start-containers-automatically/).
 
@@ -93,22 +93,21 @@ Supervision unit tests run with the normal pytest suite. Optional real Docker po
 Prerequisites (all manual; nothing starts or migrates a database):
 
 1. The isolated test database must already be migrated by you, deliberately, with `alembic upgrade head` against that test URL.
-2. Create the secret files outside the repository (or in the git-ignored `secrets/`), mode `0600`/`0400`, and never commit them: a file containing the test `DATABASE_URL`, and the Fernet key created with `init_key_file` as described above.
-3. Export only the two *paths* (not the values):
+2. Reuse the existing encrypted credential volume, encryption key and database URL file. Never regenerate the key or overwrite tokens for a deployment/restart. Host files belong outside the repository with restrictive Windows ACLs (or POSIX permissions). Compose mounts them read-only at `/run/host-secrets`; the child entrypoint copies only these two bounded regular files into UID-owned `0700` tmpfs `/run/secrets`, atomically publishing files with mode `0400`. Original files are unchanged; staging failures produce a fixed sanitized error and exit 2. This handles Windows bind mounts reporting `0777` without weakening encrypted-store checks. Each startup restages the current files, including after a Docker restart. Host mounts remain readable to the container UID; protect host ACLs and Docker access. Tmpfs is ephemeral and is not a secret vault or protection against Docker administrators.
+3. Export the two secret file *paths* (never their contents), plus the independently verified disposable identity and dedicated network name. Replace these example metadata values:
 
 ```bash
 export CTRADER_WORKER_DATABASE_URL_FILE=/secure/path/test_database_url
 export CTRADER_CREDENTIAL_KEY_HOST_FILE=/secure/path/ctrader_credential_key
+export CTRADER_EXPECTED_DATABASE='verified-disposable-database'
+export CTRADER_EXPECTED_USER='verified-disposable-user'
+export CTRADER_EXPECTED_CLUSTER_ID='verified-system-identifier'
+export CTRADER_WORKER_NETWORK_NAME='existing-dedicated-test-network'
 docker compose -f compose.ctrader-worker.yaml config -q   # validates; prints nothing
 docker compose -f compose.ctrader-worker.yaml build
 ```
 
-Initial OAuth provisioning (one-off containers share the credential volume and key; prompts are hidden; the callback listener is not published, so paste the full callback URL at the prompt when asked):
-
-```bash
-docker compose -f compose.ctrader-worker.yaml run --rm --no-deps -it --entrypoint ctrader ctrader-worker configure
-docker compose -f compose.ctrader-worker.yaml run --rm --no-deps -it --entrypoint ctrader ctrader-worker auth
-```
+Existing encrypted OAuth credentials are reused automatically; do not re-run provisioning during deployment. If credentials have never been provisioned, initialize them separately using the encrypted-store procedure above. An entrypoint override bypasses staging; stage the two files with `trading.ctrader.worker_secrets.stage_secrets(os.environ)` before invoking an interactive provisioning CLI in such a container. Do not print secret values or copy them into environment files/source control.
 
 Start, inspect, restart and stop (always with `-f compose.ctrader-worker.yaml`; never run `docker compose up` for the main stack from this workflow):
 

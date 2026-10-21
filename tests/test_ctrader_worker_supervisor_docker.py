@@ -210,3 +210,77 @@ def test_docker_recovers_after_supervisor_crash(docker, container):
     )
     eventually(lambda: int(docker("inspect", name, "--format", "{{.RestartCount}}")) >= 1)
     eventually(lambda: docker("logs", name).count("SIMULATED_READY") >= 2 and healthy(docker, name))
+
+
+def test_windows_host_secrets_stage_privately_and_survive_restaging(docker, tmp_path):
+    for name in ("ctrader_credential_key", "ctrader_worker_database_url"):
+        (tmp_path / name).write_text("synthetic-secret")
+    code = """
+import os, stat
+from pathlib import Path
+from trading.ctrader.worker_secrets import stage_secrets, SECRET_FILES, SecretStagingError
+assert os.getuid() == 10001
+for _ in range(2):
+    stage_secrets(os.environ)
+    for name in SECRET_FILES:
+        path = Path('/run/secrets') / name
+        assert path.read_text() == 'synthetic-secret'
+        assert stat.S_IMODE(path.stat().st_mode) == 0o400
+        assert Path('/run/host-secrets', name).read_text() == 'synthetic-secret'
+directory = Path('/run/secrets')
+link = directory / 'directory-link'
+link.symlink_to(directory)
+for target in (link, directory):
+    if target == directory:
+        directory.chmod(0o755)
+    try:
+        stage_secrets(os.environ, target)
+    except SecretStagingError:
+        pass
+    else:
+        raise AssertionError('Unsafe secret directory accepted')
+directory.chmod(0o700)
+source = directory / 'source'
+source.mkdir()
+(source / 'ctrader_credential_key').symlink_to(directory / 'ctrader_credential_key')
+try:
+    stage_secrets({'CTRADER_SECRET_SOURCE_DIR': str(source)})
+except SecretStagingError:
+    pass
+else:
+    raise AssertionError('Symlinked host secret accepted')
+try:
+    Path('/app/write-probe').write_text('forbidden')
+except OSError:
+    pass
+else:
+    raise AssertionError('Root filesystem is writable')
+print('PRIVATE_STAGING_OK')
+"""
+    output = docker(
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--restart",
+        "no",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges:true",
+        "--mount",
+        f"type=bind,source={tmp_path},target=/run/host-secrets,readonly",
+        "--tmpfs",
+        "/run/secrets:rw,noexec,nosuid,nodev,size=64k,mode=0700,uid=10001,gid=10001",
+        "--tmpfs",
+        "/var/lib/ctrader:rw,size=1m,mode=0700,uid=10001,gid=10001",
+        "--env",
+        "CTRADER_SECRET_SOURCE_DIR=/run/host-secrets",
+        "--entrypoint",
+        "python",
+        IMAGE,
+        "-c",
+        code,
+    )
+    assert output == "PRIVATE_STAGING_OK"

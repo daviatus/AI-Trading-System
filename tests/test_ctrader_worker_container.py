@@ -279,12 +279,19 @@ def test_compose_persistence_and_secret_mounts(compose):
     service = compose["services"]["ctrader-worker"]
     assert "ctrader_credentials:/var/lib/ctrader" in service["volumes"]
     assert "ctrader_credentials" in compose["volumes"]
-    assert set(service["secrets"]) == {"ctrader_credential_key", "ctrader_worker_database_url"}
+    assert {item["source"] for item in service["secrets"]} == {
+        "ctrader_credential_key",
+        "ctrader_worker_database_url",
+    }
+    assert all(item["target"].startswith("/run/host-secrets/") for item in service["secrets"])
+    assert any("/run/secrets:" in mount and "mode=0700" in mount for mount in service["tmpfs"])
     environment = service["environment"]
     assert environment["CTRADER_CREDENTIAL_BACKEND"] == "encrypted-file"
     assert environment["CTRADER_CREDENTIAL_KEY_FILE"].startswith("/run/secrets/")
     assert not environment["CTRADER_CREDENTIAL_FILE"].startswith("/run/secrets/")
     assert environment["LIVE_EXECUTION_ENABLED"] == "false"
+    assert environment["CTRADER_SECRET_SOURCE_DIR"] == "/run/host-secrets"
+    assert environment["CTRADER_EXPECTED_CLUSTER_ID"].startswith("${")
     for secret in compose["secrets"].values():
         assert secret["file"].startswith("${") and ":?" in secret["file"]
     assert not any("PASSWORD" in name or name == "DATABASE_URL" for name in environment)

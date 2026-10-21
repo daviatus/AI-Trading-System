@@ -10,6 +10,7 @@ from sqlalchemy.engine import make_url
 
 from trading.ctrader import encrypted_store
 from trading.ctrader.oauth import CTraderSecretStore, OAuthError, OAuthManager
+from trading.ctrader.worker_secrets import SecretStagingError, stage_secrets
 
 MAIN_POSTGRES_PORT = 5432
 WORKER_INTERVAL_SECONDS = "300"
@@ -30,6 +31,50 @@ WORKER_ARGUMENTS = (
 
 class WorkerConfigurationError(Exception):
     """A configuration failure whose message never contains secret values."""
+
+
+class WorkerStartupError(Exception):
+    """A transient dependency failure safe for Docker to retry."""
+
+
+def verify_database_identity(env: Mapping[str, str], raw: str) -> None:
+    """Optionally pin the isolated deployment before the CLI may perform any writes."""
+    expected = tuple(
+        env.get(f"CTRADER_EXPECTED_{key}", "").strip() for key in ("DATABASE", "USER", "CLUSTER_ID")
+    )
+    if not any(expected):
+        return
+    url = make_url(raw)
+    if (
+        not all(expected)
+        or url.host != "host.docker.internal"
+        or url.port != 15432
+        or url.database != expected[0]
+        or url.username != expected[1]
+        or url.drivername != "postgresql+psycopg"
+        or url.query
+    ):
+        raise WorkerConfigurationError("Database target does not match the isolated deployment")
+    import psycopg
+
+    try:
+        with psycopg.connect(
+            host=url.host,
+            port=url.port,
+            dbname=url.database,
+            user=url.username,
+            password=url.password,
+            connect_timeout=5,
+            options="-c default_transaction_read_only=on",
+        ) as connection:
+            identity = connection.execute(
+                "SELECT current_database(),current_user,system_identifier::text "
+                "FROM pg_control_system()"
+            ).fetchone()
+    except psycopg.Error:
+        raise WorkerStartupError("Isolated database identity check unavailable") from None
+    if identity != expected:
+        raise WorkerConfigurationError("Database identity does not match the isolated deployment")
 
 
 def _read_database_url(env: Mapping[str, str]) -> str:
@@ -95,7 +140,12 @@ def validate_environment(env: Mapping[str, str]) -> str:
 
 
 def prepare_environment(env: MutableMapping[str, str]) -> None:
+    try:
+        stage_secrets(env)
+    except SecretStagingError as error:
+        raise WorkerConfigurationError(str(error)) from None
     url = validate_environment(env)
+    verify_database_identity(env, url)
     env.pop("DATABASE_URL_FILE", None)
     env["DATABASE_URL"] = url
 
@@ -109,6 +159,9 @@ def main(argv: list[str] | None = None) -> int:
     except WorkerConfigurationError as error:
         print(f"cTrader worker: configuration error: {error}", file=sys.stderr)
         return 2
+    except WorkerStartupError as error:
+        print(f"cTrader worker: startup error: {error}", file=sys.stderr)
+        return 1
     from trading.ctrader.cli import main as cli_main
 
     return cli_main(list(WORKER_ARGUMENTS))
