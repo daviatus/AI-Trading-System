@@ -351,11 +351,10 @@ def _run_worker(arguments: argparse.Namespace) -> int:
         repository = PostgresMarketDataRepository(engine)
         operations = CTraderOperationsRepository(engine)
         service = CTraderSyncService(repository, account_id=arguments.account_id)
+        manager = None
         if not arguments.dry_run:
             manager = OAuthManager(CTraderSecretStore())
-            client_id, client_secret = manager.credentials()
-            access_token = manager.access_token()
-            service.client = CTraderReadOnlyClient(client_id, client_secret, access_token)
+            manager.credentials()
     except SQLAlchemyError as error:
         print(
             f"cTrader: worker database initialization failed ({type(error).__name__})",
@@ -380,6 +379,12 @@ def _run_worker(arguments: argparse.Namespace) -> int:
 
         def run_cycle() -> None:
             try:
+                if manager is not None:
+                    client_id, client_secret = manager.credentials()
+                    access_token = manager.access_token()
+                    service.client = CTraderReadOnlyClient(
+                        client_id, client_secret, access_token
+                    )
                 report = asyncio.run(
                     synchronize_worker_cycle(
                         service,
@@ -391,8 +396,17 @@ def _run_worker(arguments: argparse.Namespace) -> int:
                     )
                 )
             except SQLAlchemyError as error:
+                last_status[0] = "critical"
                 print(
                     f"cTrader: worker database operation failed ({type(error).__name__})",
+                    file=sys.stderr,
+                )
+                return
+            except (OAuthError, CTraderError, OSError, ValueError) as error:
+                last_status[0] = "critical"
+                service.client = None
+                print(
+                    f"cTrader: worker cycle failed ({type(error).__name__})",
                     file=sys.stderr,
                 )
                 return

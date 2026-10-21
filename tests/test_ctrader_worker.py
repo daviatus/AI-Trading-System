@@ -642,3 +642,146 @@ def test_status_parser_supports_report_alias():
     from trading.ctrader.cli import _parser
 
     assert _parser().parse_args(["report", "--json"]).command == "report"
+
+
+def test_worker_refreshes_oauth_token_before_each_cycle(monkeypatch):
+    from trading import db
+    from trading.ctrader import cli
+
+    tokens = iter(["token-first", "token-second"])
+    created_clients = []
+    synchronized_tokens = []
+
+    class FakeManager:
+        def __init__(self, _store):
+            pass
+
+        def credentials(self):
+            return "client-id", "client-secret"
+
+        def access_token(self):
+            return next(tokens)
+
+    class FakeClient:
+        def __init__(self, _client_id, _client_secret, access_token):
+            self.access_token = access_token
+            created_clients.append(access_token)
+
+    class FakeEngine:
+        def dispose(self):
+            pass
+
+    class FakeRepository:
+        def __init__(self, _engine):
+            pass
+
+    class FakeOperations:
+        def __init__(self, _engine):
+            pass
+
+    class FakeService:
+        def __init__(self, _repository, account_id=None):
+            self.client = None
+
+    async def fake_synchronize(service, _operations, _config, **_kwargs):
+        synchronized_tokens.append(service.client.access_token)
+        return {"status": "healthy"}
+
+    def fake_scheduler(run_cycle, _interval, **_kwargs):
+        run_cycle()
+        run_cycle()
+
+    monkeypatch.setattr(db, "get_explicit_postgres_engine", FakeEngine)
+    monkeypatch.setattr(cli, "PostgresMarketDataRepository", FakeRepository)
+    monkeypatch.setattr(cli, "CTraderOperationsRepository", FakeOperations)
+    monkeypatch.setattr(cli, "CTraderSyncService", FakeService)
+    monkeypatch.setattr(cli, "OAuthManager", FakeManager)
+    monkeypatch.setattr(cli, "CTraderReadOnlyClient", FakeClient)
+    monkeypatch.setattr(cli, "synchronize_worker_cycle", fake_synchronize)
+    monkeypatch.setattr(cli, "run_foreground_worker", fake_scheduler)
+
+    arguments = cli._parser().parse_args([
+        "worker",
+        "--instrument", "EURUSD",
+        "--environment", "demo",
+        "--timeframe", "M1",
+        "--once",
+        "--json",
+    ])
+
+    assert cli._run_worker(arguments) == 0
+    assert created_clients == ["token-first", "token-second"]
+    assert synchronized_tokens == ["token-first", "token-second"]
+
+
+def test_worker_retries_after_oauth_failure(monkeypatch, capsys):
+    from trading import db
+    from trading.ctrader import cli
+    from trading.ctrader.oauth import OAuthError
+
+    attempts = []
+    synchronized = []
+
+    class FakeManager:
+        def __init__(self, _store):
+            pass
+
+        def credentials(self):
+            return "client-id", "client-secret"
+
+        def access_token(self):
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise OAuthError("temporary failure")
+            return "recovered-token"
+
+    class FakeClient:
+        def __init__(self, _client_id, _client_secret, token):
+            self.token = token
+
+    class FakeEngine:
+        def dispose(self):
+            pass
+
+    class FakeRepository:
+        def __init__(self, _engine):
+            pass
+
+    class FakeOperations:
+        def __init__(self, _engine):
+            pass
+
+    class FakeService:
+        def __init__(self, _repository, account_id=None):
+            self.client = None
+
+    async def fake_synchronize(service, _operations, _config, **_kwargs):
+        synchronized.append(service.client.token)
+        return {"status": "healthy"}
+
+    def fake_scheduler(run_cycle, _interval, **_kwargs):
+        run_cycle()
+        run_cycle()
+
+    monkeypatch.setattr(db, "get_explicit_postgres_engine", FakeEngine)
+    monkeypatch.setattr(cli, "PostgresMarketDataRepository", FakeRepository)
+    monkeypatch.setattr(cli, "CTraderOperationsRepository", FakeOperations)
+    monkeypatch.setattr(cli, "CTraderSyncService", FakeService)
+    monkeypatch.setattr(cli, "OAuthManager", FakeManager)
+    monkeypatch.setattr(cli, "CTraderReadOnlyClient", FakeClient)
+    monkeypatch.setattr(cli, "synchronize_worker_cycle", fake_synchronize)
+    monkeypatch.setattr(cli, "run_foreground_worker", fake_scheduler)
+
+    arguments = cli._parser().parse_args([
+        "worker",
+        "--instrument", "EURUSD",
+        "--environment", "demo",
+        "--timeframe", "M1",
+        "--once",
+        "--json",
+    ])
+
+    assert cli._run_worker(arguments) == 0
+    assert len(attempts) == 2
+    assert synchronized == ["recovered-token"]
+    assert "OAuthError" in capsys.readouterr().err
