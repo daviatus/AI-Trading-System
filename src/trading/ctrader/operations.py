@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -36,7 +36,14 @@ class CTraderOperationsRepository:
                 select(SystemEvent.payload)
                 .where(
                     SystemEvent.event_type == CTRADER_WORKER_EVENT,
-                    SystemEvent.payload["report"]["synchronization_status"].astext == "complete",
+                    or_(
+                        SystemEvent.payload["report"]["execution_status"].astext == "succeeded",
+                        and_(
+                            SystemEvent.payload["report"]["execution_status"].astext.is_(None),
+                            SystemEvent.payload["report"]["synchronization_status"].astext
+                            == "complete",
+                        ),
+                    ),
                 )
                 .order_by(SystemEvent.occurred_at.desc(), SystemEvent.id.desc())
                 .limit(1)

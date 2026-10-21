@@ -1,6 +1,7 @@
 import asyncio
 import json
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from threading import Event
 
 import pytest
@@ -14,9 +15,25 @@ from trading.ctrader.worker import (
     run_foreground_worker,
     synchronize_worker_cycle,
 )
+from trading.data.domain import Candle, InstrumentCode, PriceType, Timeframe
 
 START = datetime(2026, 1, 5, 14, 1, tzinfo=UTC)
 NOW = datetime(2026, 1, 5, 15, 1, tzinfo=UTC)
+
+
+def _candle(timestamp: datetime) -> Candle:
+    return Candle(
+        instrument=InstrumentCode.EURUSD,
+        timeframe=Timeframe.M1,
+        opened_at=timestamp,
+        open=Decimal("1.10000"),
+        high=Decimal("1.10100"),
+        low=Decimal("1.09900"),
+        close=Decimal("1.10050"),
+        volume=Decimal("10"),
+        price_type=PriceType.UNKNOWN,
+        quality_metadata={"source": "ctrader_open_api"},
+    )
 
 
 class MemoryRepository:
@@ -39,9 +56,25 @@ class MemoryRepository:
         from trading.data.repository import CandleImportReport
 
         self.import_calls.append(records)
+        inserted = 0
+        unchanged = 0
         for candle, reference in records:
-            self.records.append((candle, provider, reference))
-        return CandleImportReport(seen=len(records), inserted=len(records))
+            existing = next(
+                (
+                    stored
+                    for stored, stored_provider, _ in self.records
+                    if stored.opened_at == candle.opened_at
+                    and stored.price_type == candle.price_type
+                    and stored_provider == provider
+                ),
+                None,
+            )
+            if existing is None:
+                self.records.append((candle, provider, reference))
+                inserted += 1
+            elif existing == candle:
+                unchanged += 1
+        return CandleImportReport(seen=len(records), inserted=inserted, unchanged=unchanged)
 
 
 class FakeClient:
@@ -58,7 +91,11 @@ class FakeClient:
             request_observer()
         if self.failure:
             raise self.failure
-        return self.responses
+        return [
+            candle
+            for candle in self.responses
+            if start <= datetime.fromisoformat(candle["opened_at"].replace("Z", "+00:00")) < end
+        ]
 
 
 class MemoryOperations:
@@ -74,8 +111,18 @@ class MemoryOperations:
         self.retry_state = retry_state
 
 
-def _service(repo, client, current):
-    return CTraderSyncService(repo, client, now=lambda: current[0])
+class AlwaysOpenCalendar:
+    def is_open(self, _instrument, _timestamp):
+        return True
+
+
+def _service(repo, client, current, calendar=None):
+    return CTraderSyncService(
+        repo,
+        client,
+        now=lambda: current[0],
+        calendar=calendar or AlwaysOpenCalendar(),
+    )
 
 
 def test_worker_scheduler_runs_once_and_stops_after_completion():
@@ -178,7 +225,108 @@ def test_worker_persists_structured_report_and_retry_state_only_with_write_opt_i
     assert len(operations.reports) == 1
     assert operations.reports[0]["quality"]["missing_candle_count"] == 60
     assert len(operations.retry_state) == 60
+    assert report["execution_status"] == "succeeded"
     json.dumps(report)
+
+
+def test_initial_import_reports_post_sync_completeness_and_repeat_is_idempotent():
+    current = [NOW]
+    repository = MemoryRepository()
+    window_start = NOW - timedelta(hours=24)
+    candles = [
+        _candle(window_start + timedelta(minutes=index)).model_dump(mode="json")
+        for index in range(1440)
+    ]
+    client = FakeClient(candles)
+    operations = MemoryOperations()
+    service = _service(repository, client, current)
+    config = WorkerConfig(lookback_hours=24)
+
+    first = asyncio.run(
+        synchronize_worker_cycle(
+            service,
+            operations,
+            config,
+            now=lambda: current[0],
+            save_postgres=True,
+        )
+    )
+    assert first["sync"]["existing_candle_count"] == 0
+    assert first["sync"]["candles_inserted"] == 1440
+    assert first["quality"]["stored_candle_count"] == 1440
+    assert first["quality"]["missing_candle_count"] == 0
+    assert first["quality"]["completeness_percent"] == 100
+    assert first["quality"]["status"] == "healthy"
+
+    second = asyncio.run(
+        synchronize_worker_cycle(
+            service,
+            operations,
+            config,
+            now=lambda: current[0],
+            save_postgres=True,
+        )
+    )
+
+    assert second["sync"]["existing_candle_count"] == 1440
+    assert second["sync"]["api_requests_attempted"] == 0
+    assert second["quality"]["stored_candle_count"] == 1440
+    assert second["quality"]["missing_candle_count"] == 0
+    assert second["quality"]["completeness_percent"] == 100
+    assert len(repository.records) == 1440
+
+
+def test_partial_import_reports_post_sync_count_and_success_with_broker_gaps():
+    current = [NOW]
+    repository = MemoryRepository()
+    window_start = NOW - timedelta(hours=24)
+    candles = [
+        _candle(window_start + timedelta(minutes=index)).model_dump(mode="json")
+        for index in range(9, 1440)
+    ]
+    client = FakeClient(candles)
+    operations = MemoryOperations()
+    report = asyncio.run(
+        synchronize_worker_cycle(
+            _service(repository, client, current),
+            operations,
+            WorkerConfig(lookback_hours=24),
+            now=lambda: current[0],
+            save_postgres=True,
+        )
+    )
+
+    assert report["sync"]["expected_market_minutes"] == 1440
+    assert report["sync"]["existing_candle_count"] == 0
+    assert report["sync"]["candles_inserted"] == 1431
+    assert report["sync"]["missing_candle_count"] == 1440
+    assert report["sync"]["unresolved_gaps"][0]["missing_candle_count"] == 9
+    assert report["quality"]["stored_candle_count"] == 1431
+    assert report["quality"]["missing_candle_count"] == 9
+    assert report["quality"]["completeness_percent"] == 99.375
+    assert report["quality"]["status"] == "warning"
+    assert report["execution_status"] == "succeeded"
+    assert operations.reports[0]["quality"] == report["quality"]
+
+
+def test_execution_failure_is_distinguished_from_success_with_unresolved_gaps():
+    current = [NOW]
+    report = asyncio.run(
+        synchronize_worker_cycle(
+            _service(
+                MemoryRepository(),
+                FakeClient(failure=CTraderError("temporary API failure")),
+                current,
+            ),
+            MemoryOperations(),
+            WorkerConfig(lookback_hours=24),
+            now=lambda: current[0],
+            save_postgres=True,
+        )
+    )
+
+    assert report["synchronization_status"] == "incomplete"
+    assert report["execution_status"] == "failed"
 
 
 def test_operations_repository_appends_persistent_event_payload(monkeypatch):
@@ -215,6 +363,37 @@ def test_operations_repository_appends_persistent_event_payload(monkeypatch):
     assert session.event.event_type == "ctrader_worker_run"
     assert session.event.payload == {"report": report, "retry_state": retry_state}
     assert session.event.occurred_at.utcoffset() == timedelta(0)
+
+
+def test_latest_successful_run_query_includes_succeeded_runs_with_gaps(monkeypatch):
+    from sqlalchemy.dialects import postgresql
+
+    from trading.ctrader import operations as operations_module
+
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def scalar(self, statement):
+            self.statement = statement
+            return {
+                "report": {
+                    "synchronization_status": "incomplete",
+                    "execution_status": "succeeded",
+                }
+            }
+
+    session = Session()
+    monkeypatch.setattr(operations_module, "Session", lambda _engine: session)
+    result = operations_module.CTraderOperationsRepository(object()).latest_successful_run()
+    parameters = session.statement.compile(dialect=postgresql.dialect()).params.values()
+
+    assert result["report"]["synchronization_status"] == "incomplete"
+    assert "succeeded" in parameters
+    assert "complete" in parameters
 
 
 def test_database_failure_is_reported_without_attempting_api_requests():

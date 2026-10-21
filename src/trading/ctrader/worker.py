@@ -169,7 +169,12 @@ async def synchronize_worker_cycle(
             )
             if provider == CTRADER_PARQUET_PROVIDER and candle.price_type == PriceType.UNKNOWN
         ]
-        latest = max((candle.opened_at for candle in stored_records), default=None)
+        stored_timestamps = {
+            candle.opened_at
+            for candle in stored_records
+            if service.calendar.is_open(InstrumentCode.EURUSD, candle.opened_at)
+        }
+        latest = max(stored_timestamps, default=None)
     except SQLAlchemyError as error:
         database_error_count = 1
         summary = {
@@ -194,6 +199,7 @@ async def synchronize_worker_cycle(
         finished_at.astimezone(UTC),
         service.calendar,
         config,
+        stored_candle_count=len(stored_timestamps) if not database_error_count else None,
         database_error_count=database_error_count,
     )
 
@@ -220,6 +226,13 @@ async def synchronize_worker_cycle(
         "postgres_write_enabled": save_postgres and not dry_run,
         "manual_backfill": manual_backfill,
         "synchronization_status": summary.get("status", "unknown"),
+        "execution_status": (
+            "not_run"
+            if dry_run
+            else "failed"
+            if database_error_count or summary.get("api_errors")
+            else "succeeded"
+        ),
         "status": quality.status,
         "sync": summary,
         "quality": quality.as_dict(),
@@ -238,6 +251,7 @@ async def synchronize_worker_cycle(
             report["status"] = "critical"
             report["quality"] = quality.as_dict()
             report["sync"]["database_error"] = type(error).__name__
+            report["execution_status"] = "failed"
     return report
 
 
@@ -248,11 +262,16 @@ def evaluate_data_quality(
     calendar: Any,
     config: WorkerConfig,
     *,
+    stored_candle_count: int | None = None,
     database_error_count: int = 0,
 ) -> DataQualityReport:
     expected = int(summary.get("expected_market_minutes", 0))
-    missing = int(summary.get("missing_candle_count", 0))
-    stored = max(0, expected - missing)
+    stored = (
+        max(0, min(expected, stored_candle_count))
+        if stored_candle_count is not None
+        else max(0, expected - int(summary.get("missing_candle_count", 0)))
+    )
+    missing = max(0, expected - stored)
     completeness = 100.0 if expected == 0 else stored * 100 / expected
     freshness_seconds = (
         max(0, int((now - latest_stored).total_seconds())) if latest_stored is not None else None
