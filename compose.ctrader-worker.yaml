@@ -1,0 +1,46 @@
+# Standalone cTrader DEMO read-only worker. Never merge with compose.yaml and never start the
+# main stack from this file. Required (no defaults, no secret values here):
+#   CTRADER_WORKER_DATABASE_URL_FILE  host path of a file holding the isolated test DATABASE_URL
+#   CTRADER_CREDENTIAL_KEY_HOST_FILE  host path of the Fernet key file
+name: ai-trading-ctrader-worker
+
+services:
+  ctrader-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.ctrader-worker
+    image: ai-trading-ctrader-worker:local
+    init: true
+    # Docker retries transient exits; the supervisor quarantines worker exit 2 as unhealthy.
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_signal: SIGTERM
+    stop_grace_period: 90s
+    environment:
+      CTRADER_CREDENTIAL_BACKEND: encrypted-file
+      CTRADER_CREDENTIAL_FILE: /var/lib/ctrader/credentials.enc
+      CTRADER_CREDENTIAL_KEY_FILE: /run/secrets/ctrader_credential_key
+      DATABASE_URL_FILE: /run/secrets/ctrader_worker_database_url
+      TRADING_MODE: DEMO
+      LIVE_EXECUTION_ENABLED: "false"
+    volumes:
+      - ctrader_credentials:/var/lib/ctrader
+    tmpfs:
+      - /tmp
+    secrets:
+      - ctrader_credential_key
+      - ctrader_worker_database_url
+
+secrets:
+  ctrader_credential_key:
+    file: ${CTRADER_CREDENTIAL_KEY_HOST_FILE:?set the host path of the credential key file}
+  ctrader_worker_database_url:
+    file: ${CTRADER_WORKER_DATABASE_URL_FILE:?set the host path of the test database URL file}
+
+volumes:
+  ctrader_credentials:

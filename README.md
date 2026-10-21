@@ -74,6 +74,54 @@ The store fails closed, with no plaintext fallback, on a missing/invalid key, wr
 
 Recovery: if the key is lost or the data is corrupted, the stored credentials cannot be recovered. Delete the data file (and `.lock`) deliberately, create a new key with `init_key_file`, then re-run `ctrader configure` and `ctrader auth`. Rotate the cTrader client secret if the key or data may have been exposed. Never delete the key while the data file is still needed.
 
+### Supervised Docker worker (DEMO, read-only, isolated test database)
+
+`compose.ctrader-worker.yaml` is a standalone project (`ai-trading-ctrader-worker`) that supervises `ctrader worker` every 300 seconds with `--save-postgres` for EURUSD M1 on the DEMO environment. It never uses `compose.yaml`, defines no database, publishes no ports and cannot place orders. It runs as non-root UID 10001 with a read-only root filesystem, `restart: unless-stopped`, SIGTERM and a 90 s `stop_grace_period`.
+
+The worker refuses to start (worker exit 2, no secret echoed) unless `DATABASE_URL` points to an explicit PostgreSQL host, database **and port other than 5432**, the encrypted backend, key and credential store are valid, client ID/secret and OAuth access/refresh tokens are present, `TRADING_MODE` is `DEMO` and `LIVE_EXECUTION_ENABLED` is false. Startup checks decrypt and validate stored data locally before invoking the worker CLI; they never refresh tokens or connect to a service. Expired access tokens with valid refresh data are accepted for the worker's normal refresh flow. The database URL is supplied only as a secret file; use an address reachable from the container (for example the isolated test database's host IP and published port). `host.docker.internal` is not assumed.
+
+The image entrypoint is a small Python supervisor; `worker_entrypoint` remains the child that validates and runs the worker. Docker is the only restart authority. The supervisor launches the child once and passes through ordinary exits (including unexpected exit 0 and signal deaths), so `unless-stopped` retains automatic crash recovery, Docker's restart backoff and daemon-restart recovery. There is no second retry loop, Docker socket access, external service or new dependency. See [Docker restart policy documentation](https://docs.docker.com/engine/containers/start-containers-automatically/).
+
+On **worker exit 2**, the supervisor logs a fixed diagnostic and waits idly without launching another worker. The container remains **running but unhealthy**; a local-only healthcheck reads `/tmp/ctrader-worker-supervisor.status` every 10 seconds. Docker does not restart a running unhealthy container merely because of this healthcheck. Monitor unhealthy status and correct the configuration, then explicitly restart the worker container. Configuration changes alone do not resume it. Do not attach an external auto-heal policy that restarts unhealthy containers: that would defeat the quarantine. The supervisor writes only fixed status strings to tmpfs; the healthcheck never probes the broker or database. Healthy means the child is running, not that collection or its dependencies are healthy.
+
+This deliberately trades an exited container for a visible, unhealthy idle container so daemon-restart recovery can be retained without a host supervisor. An explicit container restart or Docker daemon restart permits one new validation attempt; an unchanged permanent error returns to quarantine. The quarantine is not persisted across container lifetimes and a daemon repeatedly restarted externally can therefore trigger repeated attempts. An operator-stopped container retains Docker's `unless-stopped` semantics. Daemon restart behavior is documented Docker behavior, not something the isolated tests restart the shared daemon to verify.
+
+SIGTERM/SIGINT requests shutdown: the supervisor forwards SIGTERM to the child's process group, allows up to 80 seconds for the current cycle to finish, then kills and reaps a stuck child. This fits inside Compose's 90-second grace. It exits 0 after an operator stop; Docker's manual-stop handling prevents an automatic restart. A container runtime stop timeout shorter than 80 seconds can force termination first. The supervisor itself remains subject to Docker's restart policy if it crashes.
+
+Supervision unit tests run with the normal pytest suite. Optional real Docker policy tests use only the dedicated `ai-trading-ctrader-worker:supervision-test` image, missing configuration or synthetic children, `--network none`, empty tmpfs and a read-only synthetic fixture directory. They explicitly enable `unless-stopped` only on uniquely named disposable test containers to observe restart behavior, then disable the policy and remove each container. They exercise configuration quarantine, transient crash/recovery, signal forwarding, manual stop/start and supervisor crashes. They do not restart the Docker daemon, mount real credentials or access a database. To run them after building the test image, set `RUN_CTRADER_SUPERVISION_DOCKER_TESTS=1` and run `python -m pytest tests/test_ctrader_worker_supervisor_docker.py -q`.
+
+Prerequisites (all manual; nothing starts or migrates a database):
+
+1. The isolated test database must already be migrated by you, deliberately, with `alembic upgrade head` against that test URL.
+2. Create the secret files outside the repository (or in the git-ignored `secrets/`), mode `0600`/`0400`, and never commit them: a file containing the test `DATABASE_URL`, and the Fernet key created with `init_key_file` as described above.
+3. Export only the two *paths* (not the values):
+
+```bash
+export CTRADER_WORKER_DATABASE_URL_FILE=/secure/path/test_database_url
+export CTRADER_CREDENTIAL_KEY_HOST_FILE=/secure/path/ctrader_credential_key
+docker compose -f compose.ctrader-worker.yaml config -q   # validates; prints nothing
+docker compose -f compose.ctrader-worker.yaml build
+```
+
+Initial OAuth provisioning (one-off containers share the credential volume and key; prompts are hidden; the callback listener is not published, so paste the full callback URL at the prompt when asked):
+
+```bash
+docker compose -f compose.ctrader-worker.yaml run --rm --no-deps -it --entrypoint ctrader ctrader-worker configure
+docker compose -f compose.ctrader-worker.yaml run --rm --no-deps -it --entrypoint ctrader ctrader-worker auth
+```
+
+Start, inspect, restart and stop (always with `-f compose.ctrader-worker.yaml`; never run `docker compose up` for the main stack from this workflow):
+
+```bash
+docker compose -f compose.ctrader-worker.yaml up -d ctrader-worker
+docker compose -f compose.ctrader-worker.yaml logs --tail 100 -f ctrader-worker
+docker compose -f compose.ctrader-worker.yaml restart ctrader-worker
+docker compose -f compose.ctrader-worker.yaml stop ctrader-worker       # graceful SIGTERM
+docker compose -f compose.ctrader-worker.yaml down                      # keeps the credential volume
+```
+
+Recovery: worker exit 2 quarantines the container as unhealthy and reports which prerequisite failed (URL, port, key, permissions, backend or stored credentials/tokens). Correct the failure, then explicitly restart; merely changing a mounted file does not resume it. A wrong/lost key or corrupted credential file follows the encrypted-store recovery above, using `docker compose -f compose.ctrader-worker.yaml down -v` only to delete the credential volume deliberately, then re-provisioning. Authorization failures (expired or revoked refresh token) are logged as `OAuthError` without secrets; re-run `auth`. Cycles that fail on database or API errors are logged and retried on the next interval.
+
 After explicit operator approval for a real read-only connection, these commands perform demo-only API calls:
 
 ```powershell

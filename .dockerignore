@@ -7,3 +7,6 @@ __pycache__
 .ruff_cache
 data/
 *.py[cod]
+secrets/
+*.key
+compose*.yaml

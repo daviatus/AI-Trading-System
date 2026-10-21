@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import json
+import sys
 import urllib.parse
 from datetime import UTC, datetime, timedelta
 
@@ -58,6 +59,30 @@ class MemoryKeyring:
 
     def delete_password(self, _service, key):
         self.values.pop(key, None)
+
+
+def test_default_keyring_configuration_and_refresh_behavior_is_preserved(monkeypatch):
+    backend = MemoryKeyring()
+    monkeypatch.delenv("CTRADER_CREDENTIAL_BACKEND", raising=False)
+    monkeypatch.setitem(sys.modules, "keyring", backend)
+    store = CTraderSecretStore()
+    requests = []
+
+    def refresh(*args):
+        requests.append(args)
+        return {"accessToken": "new-access", "refreshToken": "new-refresh", "expiresIn": 3600}
+
+    manager = OAuthManager(store, post_form=refresh, now=lambda: 100)
+    manager.configure("id", "secret")
+    # The existing desktop parser accepts string expiry values; strict worker checks are opt-in.
+    store.set(
+        store.TOKEN_KEY,
+        json.dumps({"access_token": "old", "refresh_token": "refresh", "expires_at": "99"}),
+    )
+    assert manager.credentials() == ("id", "secret")
+    assert manager.access_token() == "new-access"
+    assert len(requests) == 1
+    assert OAuthTokens.from_json(store.get(store.TOKEN_KEY)).refresh_token == "new-refresh"
 
 
 class FakeWebSocket:

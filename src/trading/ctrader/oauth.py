@@ -49,17 +49,22 @@ class OAuthTokens:
         )
 
     @classmethod
-    def from_json(cls, value: str) -> "OAuthTokens":
+    def from_json(cls, value: str, *, strict: bool = False) -> "OAuthTokens":
         try:
             payload = json.loads(value)
             if not isinstance(payload, dict):
                 raise ValueError
             access_token = payload["access_token"]
             refresh_token = payload["refresh_token"]
-            expires_at = int(payload["expires_at"])
+            raw_expiry = payload["expires_at"]
+            if strict and (type(raw_expiry) is not int or raw_expiry <= 0):
+                raise ValueError
+            expires_at = int(raw_expiry)
             if not isinstance(access_token, str) or not access_token:
                 raise ValueError
             if not isinstance(refresh_token, str) or not refresh_token:
+                raise ValueError
+            if strict and (not access_token.strip() or not refresh_token.strip()):
                 raise ValueError
             return cls(
                 access_token=access_token,
@@ -207,6 +212,17 @@ class OAuthManager:
         if not client_id or not client_secret:
             raise OAuthError("cTrader credentials are not configured; run `ctrader configure`")
         return client_id, client_secret
+
+    def validate_stored_configuration(self) -> None:
+        """Check worker prerequisites locally, without refreshing tokens or changing storage."""
+        client_id, client_secret = self.credentials()
+        if not client_id.strip() or not client_secret.strip():
+            raise OAuthError("Stored cTrader client credentials are invalid")
+        stored = self.store.get(CTraderSecretStore.TOKEN_KEY)
+        if not stored:
+            raise OAuthError("No cTrader authorization is stored; run `ctrader auth`")
+        # An expired access token is valid configuration when refresh data is present.
+        OAuthTokens.from_json(stored, strict=True)
 
     def configure(self, client_id: str, client_secret: str) -> None:
         if not client_id.strip() or not client_secret:

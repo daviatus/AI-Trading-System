@@ -59,3 +59,6 @@ playwright/.auth/
 **/browser-profile/
 **/ctrader-browser-profile/
 **/ctrader-copy-profile/
+
+# Local secret mounts
+secrets/
