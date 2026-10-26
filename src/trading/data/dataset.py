@@ -26,6 +26,7 @@ class FeatureConfig:
     volume_window: int = 20
     target_horizon_bars: int = 5
     direction_threshold: float = 0.0
+    include_trend_indicators: bool = False
 
     def __post_init__(self) -> None:
         if not self.return_lags or any(lag <= 0 for lag in self.return_lags):
@@ -142,6 +143,7 @@ def build_ml_dataset(
     purge_gap_bars: int | None = None,
     embargo_bars: int = 0,
     max_rows: int = 2_000_000,
+    reset_on_gaps: bool = False,
 ) -> PreparedDataset:
     config = feature_config or FeatureConfig()
     if not 0 < train_fraction < 1 or not 0 < validation_fraction < 1:
@@ -162,7 +164,16 @@ def build_ml_dataset(
         raise ValueError("purge_gap_bars must be at least the forward target horizon")
 
     raw = _candles_to_frame(candles, instrument, timeframe)
-    features, targets, definitions = _create_features_and_targets(raw, config)
+    if reset_on_gaps:
+        # Reset both indicator state and forward labels at every absent bar.
+        # Never synthesize prices or interpret a multi-minute move as an M1 return.
+        groups = raw.index.to_series().diff().ne(timedelta(minutes=timeframe.value)).cumsum()
+        parts = [_create_features_and_targets(part, config) for _, part in raw.groupby(groups)]
+        features = pd.concat([part[0] for part in parts])
+        targets = pd.concat([part[1] for part in parts])
+        definitions = parts[0][2]
+    else:
+        features, targets, definitions = _create_features_and_targets(raw, config)
     valid = features.notna().all(axis=1) & targets.notna().all(axis=1)
     features = features.loc[valid].astype("float64")
     targets = targets.loc[valid].astype("float64")
@@ -201,6 +212,7 @@ def build_ml_dataset(
             "features": asdict(config),
             "train_fraction": train_fraction,
             "validation_fraction": validation_fraction,
+            "reset_on_gaps": reset_on_gaps,
         },
         dataset_fingerprint=dataset_fingerprint,
         row_count=len(features),
@@ -332,6 +344,16 @@ def _create_features_and_targets(
         ema = close.ewm(span=span, adjust=False, min_periods=span).mean()
         features[name] = close / ema - 1
         definitions[name] = f"close[t] / causal EMA(span={span}, adjust=False) - 1"
+        if config.include_trend_indicators:
+            features[f"ema_{span}"] = ema
+            definitions[f"ema_{span}"] = f"Causal EMA(span={span}, adjust=False), price units"
+            features[f"ema_slope_{span}"] = ema.pct_change(fill_method=None)
+            definitions[f"ema_slope_{span}"] = f"EMA({span})[t] / EMA({span})[t-1] - 1"
+
+    if config.include_trend_indicators and len(config.ema_spans) >= 2:
+        fast, slow = min(config.ema_spans), max(config.ema_spans)
+        features["ema_trend_spread"] = features[f"ema_{fast}"] / features[f"ema_{slow}"] - 1
+        definitions["ema_trend_spread"] = f"EMA({fast}) / EMA({slow}) - 1, through t"
 
     delta = close.diff()
     gains = delta.clip(lower=0)
@@ -373,6 +395,9 @@ def _create_features_and_targets(
     definitions[f"atr_fraction_{config.atr_period}"] = (
         f"Causal Wilder-style ATR(period={config.atr_period}) / close[t]"
     )
+    if config.include_trend_indicators:
+        features[f"atr_{config.atr_period}"] = atr
+        definitions[f"atr_{config.atr_period}"] = "Causal Wilder-style ATR, price units"
 
     volume_mean = volume.rolling(
         config.volume_window,
@@ -389,6 +414,10 @@ def _create_features_and_targets(
     features[f"volume_zscore_{config.volume_window}"] = (volume - volume_mean) / volume_std.replace(
         0, np.nan
     )
+    # Constant observed volume is a zero deviation; unknown volume stays unknown.
+    features[f"volume_zscore_{config.volume_window}"] = features[
+        f"volume_zscore_{config.volume_window}"
+    ].mask(volume_std.eq(0) & volume_mean.notna(), 0.0)
     definitions[f"volume_zscore_{config.volume_window}"] = (
         f"Current volume causal z-score over {config.volume_window} bars"
     )

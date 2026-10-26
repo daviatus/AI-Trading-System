@@ -5,6 +5,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from trading.data.domain import InstrumentCode
 from trading.models import SystemEvent
 
 CTRADER_WORKER_EVENT = "ctrader_worker_run"
@@ -13,14 +14,16 @@ CTRADER_WORKER_EVENT = "ctrader_worker_run"
 class CTraderOperationsRepository:
     """Append-only worker reports and retry state stored in existing system events."""
 
-    def __init__(self, engine: Engine) -> None:
+    def __init__(self, engine: Engine, instrument: InstrumentCode = InstrumentCode.EURUSD) -> None:
         self.engine = engine
+        self.event_type = (CTRADER_WORKER_EVENT if instrument == InstrumentCode.EURUSD
+                           else f"{CTRADER_WORKER_EVENT}:{instrument.value}")
 
     def recent_runs(self, limit: int = 100) -> list[dict[str, Any]]:
         with Session(self.engine) as session:
             events = session.scalars(
                 select(SystemEvent)
-                .where(SystemEvent.event_type == CTRADER_WORKER_EVENT)
+                .where(SystemEvent.event_type == self.event_type)
                 .order_by(SystemEvent.occurred_at.desc(), SystemEvent.id.desc())
                 .limit(limit)
             )
@@ -35,7 +38,7 @@ class CTraderOperationsRepository:
             return session.scalar(
                 select(SystemEvent.payload)
                 .where(
-                    SystemEvent.event_type == CTRADER_WORKER_EVENT,
+                    SystemEvent.event_type == self.event_type,
                     or_(
                         SystemEvent.payload["report"]["execution_status"].astext == "succeeded",
                         and_(
@@ -61,7 +64,7 @@ class CTraderOperationsRepository:
         retry_state: dict[str, dict[str, Any]],
     ) -> None:
         event = SystemEvent(
-            event_type=CTRADER_WORKER_EVENT,
+            event_type=self.event_type,
             occurred_at=datetime.now(UTC),
             payload={"report": report, "retry_state": retry_state},
         )

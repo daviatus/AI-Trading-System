@@ -132,6 +132,27 @@ class CTraderReadOnlyClient:
         ]
 
     async def discover_eurusd(self, account_id: int | None = None) -> dict:
+        metadata = await self.discover_instrument(InstrumentCode.EURUSD, "EURUSD", account_id)
+        # Preserve the existing EURUSD CLI contract; generic discovery exposes specs.
+        metadata["symbol"] = {k: v for k, v in metadata["symbol"].items()
+                              if k not in {"enabled", "description", "specifications"}}
+        return metadata
+
+    async def list_symbols(self, account_id: int) -> list[dict]:
+        async with self._connection() as websocket:
+            await self._authenticate_application(websocket)
+            response = await self._request(websocket, *ACCOUNT_AUTH, {
+                "ctidTraderAccountId": account_id, "accessToken": self._access_token,
+            })
+            _verify_account_authorization(response, account_id)
+            response = await self._request(websocket, *SYMBOLS_LIST, {
+                "ctidTraderAccountId": account_id, "includeArchivedSymbols": False,
+            })
+        return response["symbol"]
+
+    async def discover_instrument(
+        self, instrument: InstrumentCode, broker_symbol: str, account_id: int | None = None,
+    ) -> dict:
         async with self._connection() as websocket:
             await self._authenticate_application(websocket)
             accounts_response = await self._request(
@@ -174,7 +195,7 @@ class CTraderReadOnlyClient:
                 symbol
                 for symbol in symbol_items
                 if isinstance(symbol.get("symbolName"), str)
-                and _normalize_symbol(symbol["symbolName"]) == "EURUSD"
+                and _normalize_symbol(symbol["symbolName"]) == _normalize_symbol(broker_symbol)
             ]
             if not matches:
                 raise CTraderError("EURUSD was not found in the selected demo account")
@@ -195,6 +216,8 @@ class CTraderReadOnlyClient:
             detail = detail_values[0]
             if not isinstance(detail, dict):
                 raise CTraderError("cTrader returned malformed EURUSD symbol metadata")
+            if detail.get("symbolId") is not None and _account_id(detail["symbolId"]) != symbol_id:
+                raise CTraderError("cTrader returned metadata for a different symbol")
         return {
             "account": {
                 "account_id": selected_id,
@@ -204,13 +227,16 @@ class CTraderReadOnlyClient:
                 "trader_login": trader.get("traderLogin"),
             },
             "symbol": {
-                "internal_instrument": "EURUSD",
+                "internal_instrument": instrument.value,
                 "broker_symbol_name": symbol.get("symbolName"),
                 "broker_symbol_id": symbol.get("symbolId"),
                 "account_id": selected_id,
                 "environment": "demo",
                 "digits": detail.get("digits"),
                 "pip_position": detail.get("pipPosition"),
+                "enabled": symbol.get("enabled"),
+                "description": symbol.get("description"),
+                "specifications": detail,
             },
         }
 
@@ -223,8 +249,22 @@ class CTraderReadOnlyClient:
         diagnostics: bool = False,
         request_observer: Callable[[], None] | None = None,
     ) -> list[dict]:
+        return await self.get_m1_candles(
+            InstrumentCode.EURUSD, start, end, account_id,
+            diagnostics=diagnostics, request_observer=request_observer,
+        )
+
+    async def get_m1_candles(
+        self, instrument: InstrumentCode, start: datetime, end: datetime,
+        account_id: int | None = None, *, broker_symbol: str | None = None,
+        diagnostics: bool = False, request_observer: Callable[[], None] | None = None,
+    ) -> list[dict]:
         start, end = _validate_candle_range(start, end)
-        symbol_metadata = await self.discover_eurusd(account_id)
+        symbol_metadata = (
+            await self.discover_eurusd(account_id) if instrument == InstrumentCode.EURUSD
+            else await self.discover_instrument(instrument, broker_symbol or instrument.value,
+                                                account_id)
+        )
         selected_id = symbol_metadata["account"]["account_id"]
         symbol = symbol_metadata["symbol"]
         symbol_id = _account_id(symbol["broker_symbol_id"])
@@ -274,6 +314,9 @@ class CTraderReadOnlyClient:
             end,
             digits,
             diagnostics=diagnostics,
+            instrument=instrument,
+            broker_symbol=symbol["broker_symbol_name"],
+            broker_symbol_id=symbol_id,
         )
 
     async def get_eurusd_m1_candles_multi_day(
@@ -284,6 +327,8 @@ class CTraderReadOnlyClient:
         *,
         diagnostics: bool = False,
         request_observer: Callable[[], None] | None = None,
+        instrument: InstrumentCode = InstrumentCode.EURUSD,
+        broker_symbol: str | None = None,
     ) -> list[dict]:
         start, end = _validate_candle_range(
             start,
@@ -298,7 +343,13 @@ class CTraderReadOnlyClient:
             chunk_end = min(chunk_start + MAX_CANDLE_REQUEST_INTERVAL, end)
             for attempt in range(MAX_CANDLE_CHUNK_ATTEMPTS):
                 try:
-                    if request_observer is None:
+                    if instrument != InstrumentCode.EURUSD:
+                        chunk = await self.get_m1_candles(
+                            instrument, chunk_start, chunk_end, account_id,
+                            broker_symbol=broker_symbol, diagnostics=diagnostics,
+                            request_observer=request_observer,
+                        )
+                    elif request_observer is None:
                         chunk = await self.get_eurusd_m1_candles(
                             chunk_start,
                             chunk_end,
@@ -762,6 +813,9 @@ def _decode_m1_trendbars(
     digits: int,
     *,
     diagnostics: bool = False,
+    instrument: InstrumentCode = InstrumentCode.EURUSD,
+    broker_symbol: str | None = None,
+    broker_symbol_id: int | None = None,
 ) -> list[dict]:
     account_id = response.get("ctidTraderAccountId")
     if account_id is None:
@@ -847,7 +901,7 @@ def _decode_m1_trendbars(
         }
         try:
             candle = Candle(
-                instrument=InstrumentCode.EURUSD,
+                instrument=instrument,
                 timeframe=Timeframe.M1,
                 opened_at=opened_at,
                 volume=Decimal(volume),
@@ -855,6 +909,8 @@ def _decode_m1_trendbars(
                 quality_metadata={
                     "source": "ctrader_open_api",
                     "volume_units": "raw_protocol_integer",
+                    "broker_symbol": broker_symbol,
+                    "broker_symbol_id": broker_symbol_id,
                 },
                 **{key: value.quantize(precision) for key, value in prices.items()},
             )

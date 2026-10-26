@@ -1,0 +1,7 @@
+{
+  "instruments": [
+    {"instrument": "EURUSD", "candidates": ["EURUSD"], "collector_owner": "existing-docker"},
+    {"instrument": "XAUUSD", "candidates": ["XAUUSD"], "collector_owner": "multiasset"},
+    {"instrument": "WTI", "candidates": ["SpotCrude", "USOIL", "XTIUSD", "WTI"], "collector_owner": "multiasset"}
+  ]
+}

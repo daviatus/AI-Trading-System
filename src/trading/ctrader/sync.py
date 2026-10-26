@@ -78,6 +78,7 @@ class CTraderSyncPlan:
     market_closed_minutes: int
     expected_market_minutes: int
     missing_intervals: tuple[MissingInterval, ...]
+    instrument: InstrumentCode = InstrumentCode.EURUSD
 
     @property
     def missing_timestamps(self) -> tuple[datetime, ...]:
@@ -89,7 +90,7 @@ class CTraderSyncPlan:
 
     def as_dict(self) -> dict[str, object]:
         return {
-            "instrument": InstrumentCode.EURUSD.value,
+            "instrument": self.instrument.value,
             "timeframe": Timeframe.M1.label,
             "requested_interval": {
                 "start": _format_utc(self.requested_start),
@@ -122,6 +123,8 @@ class CTraderSyncService:
         calendar: MarketCalendar | None = None,
         now: Callable[[], datetime] | None = None,
         account_id: int | None = None,
+        instrument: InstrumentCode = InstrumentCode.EURUSD,
+        broker_symbol: str | None = None,
     ) -> None:
         self.repository = repository
         self.client = client
@@ -131,6 +134,8 @@ class CTraderSyncService:
             self.calendar = MarketCalendar.from_config(get_settings().market_sessions)
         self.now = now or (lambda: datetime.now(UTC))
         self.account_id = account_id
+        self.instrument = instrument
+        self.broker_symbol = broker_symbol
 
     def build_plan(
         self,
@@ -148,7 +153,7 @@ class CTraderSyncService:
         stored_timestamps = set()
         if start < effective_end:
             records = self.repository.iter_candle_records(
-                InstrumentCode.EURUSD,
+                self.instrument,
                 Timeframe.M1,
                 start,
                 effective_end,
@@ -164,7 +169,7 @@ class CTraderSyncService:
         closed_minutes = 0
         timestamp = start
         while timestamp < effective_end:
-            if self.calendar.is_open(InstrumentCode.EURUSD, timestamp):
+            if self.calendar.is_open(self.instrument, timestamp):
                 expected.append(timestamp)
             else:
                 closed_minutes += 1
@@ -180,6 +185,7 @@ class CTraderSyncService:
             market_closed_minutes=closed_minutes,
             expected_market_minutes=len(expected),
             missing_intervals=tuple(intervals),
+            instrument=self.instrument,
         )
 
     async def synchronize(
@@ -250,6 +256,8 @@ class CTraderSyncService:
                     interval.end,
                     self.account_id,
                     request_observer=record_request,
+                    **({"instrument": self.instrument, "broker_symbol": self.broker_symbol}
+                       if self.instrument != InstrumentCode.EURUSD else {}),
                 )
             except CTraderError as error:
                 api_errors.append(str(error))
@@ -259,13 +267,16 @@ class CTraderSyncService:
                 continue
 
             retrieved_count += len(data)
-            valid_candles, quality = validate_candle_data(data, interval.start, interval.end)
+            valid_candles, quality = validate_candle_data(
+                data, interval.start, interval.end, instrument=self.instrument,
+                calendar=self.calendar,
+            )
             duplicate_count += int(quality["duplicate_count"])
             wrong_identity = [
                 candle
                 for candle in valid_candles
                 if (
-                    candle.instrument != InstrumentCode.EURUSD
+                    candle.instrument != self.instrument
                     or candle.timeframe != Timeframe.M1
                     or candle.price_type != PriceType.UNKNOWN
                 )
@@ -287,7 +298,7 @@ class CTraderSyncService:
             for candle in valid_candles:
                 if candle.opened_at in requested_timestamps:
                     source_reference = (
-                        "ctrader-demo:EURUSD:M1:"
+                        f"ctrader-demo:{self.instrument.value}:M1:"
                         f"[{_format_utc(interval.start)},{_format_utc(interval.end)})"
                     )
                     fetched_by_timestamp[candle.opened_at] = (candle, source_reference)
@@ -319,7 +330,7 @@ class CTraderSyncService:
             ]
             if records:
                 import_report = self.repository.import_candles(
-                    configured_instruments()[InstrumentCode.EURUSD],
+                    configured_instruments()[self.instrument],
                     Timeframe.M1,
                     CTRADER_PARQUET_PROVIDER,
                     records,

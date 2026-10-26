@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from trading.ctrader import cli, parquet
+from trading.ctrader import cli
 from trading.ctrader.parquet import CTRADER_PARQUET_PROVIDER, persist_candles
 from trading.ctrader.quality import validate_candle_data
 from trading.data.domain import Candle, InstrumentCode, Timeframe
@@ -217,7 +217,7 @@ def test_ctrader_parquet_failure_does_not_publish_partial_dataset(tmp_path, monk
         (staging_root / "partial.parquet").write_text("partial", encoding="ascii")
         raise OSError("simulated storage failure")
 
-    monkeypatch.setattr(parquet, "export_partition", fail_after_staging)
+    monkeypatch.setattr("trading.data.parquet_store.export_partition", fail_after_staging)
     candle = Candle(
         instrument=InstrumentCode.EURUSD,
         timeframe=Timeframe.M1,

@@ -38,6 +38,10 @@ ctrader-export = [
 analytics = [
     "duckdb>=1.2,<2",
 ]
+research = [
+    "xgboost>=3.0,<4",
+    "scipy>=1.15,<2",
+]
 
 [project.scripts]
 ctrader-copy-exporter = "tools.ctrader_copy_exporter.cli:main"

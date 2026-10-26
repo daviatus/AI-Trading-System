@@ -4,6 +4,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from trading.data.domain import Candle, InstrumentCode, Timeframe
+from trading.data.market_calendar import MarketCalendar
 from trading.data.quality import check_candle_quality
 
 
@@ -11,6 +12,8 @@ def validate_candle_data(
     data: list[dict[str, Any]],
     start: datetime,
     end: datetime,
+    *, instrument: InstrumentCode = InstrumentCode.EURUSD,
+    calendar: MarketCalendar | None = None,
 ) -> tuple[list[Candle], dict[str, object]]:
     """Validate normalized cTrader candles and summarize coverage without filling gaps."""
     valid_candles: list[Candle] = []
@@ -51,6 +54,10 @@ def validate_candle_data(
             continue
 
         timestamp = candle.opened_at
+        if candle.instrument != instrument or candle.timeframe != Timeframe.M1:
+            input_errors.append({"code": "wrong_identity", "timestamp": timestamp.isoformat(),
+                                 "detail": "Response instrument/timeframe does not match request"})
+            continue
         if not start <= timestamp < end:
             input_errors.append(
                 {
@@ -73,10 +80,11 @@ def validate_candle_data(
 
     report = check_candle_quality(
         valid_candles,
-        InstrumentCode.EURUSD,
+        instrument,
         Timeframe.M1.value,
         range_start=start,
         range_end=end,
+        calendar=calendar,
     )
     issues = [
         {
@@ -100,7 +108,7 @@ def validate_candle_data(
     ]
     status = "invalid" if errors else "valid_with_gaps" if gaps else "valid"
     return valid_candles, {
-        "instrument": InstrumentCode.EURUSD.value,
+        "instrument": instrument.value,
         "timeframe_minutes": Timeframe.M1.value,
         "requested_interval": {
             "start": start.astimezone(UTC).isoformat().replace("+00:00", "Z"),

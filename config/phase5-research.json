@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "output": "data/research/phase5-v1",
+  "start": "2021-10-22T00:00:00Z",
+  "end": "2026-10-22T00:00:00Z",
+  "assets": ["EURUSD", "XAUUSD", "WTI"],
+  "free_floor_gib": 15,
+  "minimum_available_ram_gib": 1.5,
+  "threads": 1,
+  "seed": 20261022,
+  "max_training_rows": 80000,
+  "horizons": [15, 60],
+  "stop_atr": 2.0,
+  "reward_risk": 3.0,
+  "initial_equity": 10000,
+  "risk_fraction": 0.0025,
+  "daily_loss_fraction": 0.015,
+  "max_gross_leverage": 5.0,
+  "max_positions": 1,
+  "thresholds": [0.45, 0.55, 0.65],
+  "regime_filters": ["all", "exclude_abnormal"],
+  "cost_multipliers": [1.0, 2.0, 3.0],
+  "costs": {
+    "EURUSD": {"spread_bps": 1.0, "slippage_bps_per_side": 0.25, "commission_bps_roundtrip": 0.6},
+    "XAUUSD": {"spread_bps": 2.0, "slippage_bps_per_side": 0.5, "commission_bps_roundtrip": 0.7},
+    "WTI": {"spread_bps": 4.0, "slippage_bps_per_side": 1.0, "commission_bps_roundtrip": 0.0}
+  },
+  "models": [
+    {"max_depth": 2, "n_estimators": 80, "learning_rate": 0.06},
+    {"max_depth": 3, "n_estimators": 100, "learning_rate": 0.05}
+  ],
+  "folds": [
+    {"name": "walk-2024", "train_end": "2024-01-01", "calibration_end": "2024-04-01", "tuning_end": "2024-07-01", "test_end": "2025-01-01", "holdout": false},
+    {"name": "walk-2025", "train_end": "2025-01-01", "calibration_end": "2025-04-01", "tuning_end": "2025-07-01", "test_end": "2026-01-01", "holdout": false},
+    {"name": "holdout-2026", "train_end": "2025-07-01", "calibration_end": "2025-10-01", "tuning_end": "2026-01-01", "test_end": "2026-10-22", "holdout": true}
+  ],
+  "assumptions": [
+    "USD research account; reference OHLC price type unknown, treated as midpoint only for sensitivity analysis",
+    "Contract quantity is base/measurement units; cTrader volume fields are hundredths of a unit; raw metadata is retained",
+    "Costs are explicit scenarios, not broker-verified historical spreads or commissions",
+    "Signal uses a completed bar; entry is next contiguous valid bar open; ambiguous stop/target bar takes stop first",
+    "No overnight UTC positions; gap-crossing open positions are conservatively stopped at the first valid post-gap open",
+    "Final 2026 holdout is evaluated once after development choices are frozen; no live execution"
+  ]
+}

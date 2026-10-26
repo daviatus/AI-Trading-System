@@ -4,6 +4,147 @@ The foundation includes PostgreSQL, Alembic migrations, structured logs, and liv
 
 Trading mode defaults to `DEMO`. Configuration only accepts `DEMO` or `SIMULATION`; enabling `LIVE_EXECUTION_ENABLED` or selecting `LIVE` is rejected. The cTrader integration is limited to explicit, read-only demo account and symbol discovery. It cannot place orders or modify positions. No credentials are stored in source code; model training and strategy optimization are out of scope.
 
+## Phase 4C: multi-asset DEMO market data
+
+Resolved on Pepperstone DEMO: **EURUSD (1), XAUUSD (41), and SpotCrude (250)**.
+SpotCrude uses the existing internal **WTI** code; it is not Brent or an oil
+perpetual. Candidate aliases and collector ownership are in
+`config/ctrader_instruments.json`; live-verified metadata/sessions are in
+`data/phase4c/symbols.json`. No contract sizes are guessed.
+
+The existing EURUSD Docker collector remains its exclusive owner and OAuth
+refresher. A detached hidden supervisor runs the same generalized worker/sync
+pipeline for XAUUSD and WTI every **300 seconds**, with per-instrument reports,
+retry state, watermarks and failure isolation. This adds the markets without
+restarting or duplicating EURUSD collection. Original credentials, keys, volumes,
+EURUSD history and reports are preserved. All database work remains pinned to
+the verified test instance on host port **15432**.
+
+```powershell
+# Collection status, candle counts/date ranges and independent watermarks:
+.\.venv\Scripts\python.exe -m trading.ctrader.multiasset status
+
+# Historical progress by instrument (replace XAUUSD with WTI for oil):
+.\.venv\Scripts\python.exe -m trading.ctrader.history_backfill status --state-dir .\data\phase4c\history\XAUUSD --verify
+
+# Safely stop / resume that historical job:
+.\.venv\Scripts\python.exe -m trading.ctrader.history_backfill stop --state-dir .\data\phase4c\history\XAUUSD
+.\.venv\Scripts\python.exe -m trading.ctrader.history_backfill start --state-dir .\data\phase4c\history\XAUUSD
+```
+
+EURUSD's original history job uses the Phase 4B default state directory and has
+scanned all 261 batches; do not initialize another EURUSD download. Both new
+historical jobs use the existing seven-day implementation with independent
+instrument locks/checkpoints and controlled concurrency (one job per new asset).
+They stop before each asset's seeded continuous range. All processes retain the
+10 GiB disk guard and bounded retries, and remain independent of Codex/terminal
+sessions. After Windows restarts or exhausted retry bounds, explicitly resume
+the histories with `start`; resume the additional continuous collector with
+`python -m trading.ctrader.multiasset start`. It still depends on Docker and the
+original collector's provisioned credentials and token refresh.
+
+Per-symbol broker weekly sessions and exposed dated holidays drive the new
+collection/quality calendars. The unchanged legacy EURUSD worker still labels
+two rollover minutes as missing; the Phase 4C broker-calendar audit correctly
+classifies them as closures. Historical calendar changes and unexposed holidays
+remain documented uncertainties. Features remain causal, gap-safe, separately
+labelled and instrument-isolated; no ML training ran.
+
+The existing Phase 4A CLI also accepts `--instrument XAUUSD` (or `WTI`),
+`--symbols .\data\phase4c\symbols.json`, and bounded `--start` / `--end` UTC
+ranges. Its explicit private `PHASE4A_DATABASE_URL` requirement remains unchanged.
+Reports and sample feature datasets are under `data/phase4c/quality/<instrument>`.
+See [the measured Phase 4C report](reports/phase4c-multiasset.md).
+
+## Phase 4B: five-year Pepperstone DEMO history
+
+The independent historical job reuses the existing cTrader sync service and
+PostgreSQL importer. It targets `[2021-10-22, 2026-10-22)` UTC in batches no larger
+than seven calendar days. The existing collector owns its recent stored range;
+the backfill stops at the beginning of that range to avoid overlapping jobs.
+The job verifies the exact disposable database/user/cluster before any write,
+connects only through loopback port **15432**, and uses separate append-only
+`system_events` checkpoint/error types. It never changes collector reports,
+credentials, encryption keys, containers or volumes.
+
+From the project directory in PowerShell:
+
+```powershell
+# Inspect local supervisor state and fresh PostgreSQL evidence:
+.\.venv\Scripts\python.exe -m trading.ctrader.history_backfill status --verify
+
+# Request a safe stop at the next API/write boundary:
+.\.venv\Scripts\python.exe -m trading.ctrader.history_backfill stop
+
+# Resume the same job after it has stopped:
+.\.venv\Scripts\python.exe -m trading.ctrader.history_backfill start
+```
+
+Initialization has already been performed for this deployment. `init` is for a
+new reviewed deployment only; do not remove `data/phase4b/job.json` or checkpoints
+to restart a download. The detached hidden supervisor outlives the launching
+terminal/Codex session, retries transient process failures with bounded backoff,
+and stops on permanent safety failures. A host file lock and a PostgreSQL advisory
+lock reject duplicate historical jobs. It is not installed as a Windows service:
+after Windows/Docker shutdown or exhausted retries, use `start` to resume.
+
+The host process requires Docker access and network access to the DEMO endpoint.
+It reads a snapshot of the provisioned collector credentials through a captured
+private subprocess pipe, never refreshes tokens and never writes credentials.
+If needed it waits, within bounded restart limits, for the collector to refresh
+the token. Request pacing is at most one historical request per second, with the
+existing daily-chunk retries plus at most three batch attempts.
+
+Windows and PostgreSQL filesystem free space are monitored. Below **10 GiB**
+(a conservative floor above 10 decimal GB), the process stops without deleting
+anything. Completed batches have durable PostgreSQL checkpoints; a crash between
+candle commit and checkpoint commit safely replays the batch with idempotent
+inserts. Missing trading minutes remain recorded in scanned-batch checkpoints;
+"scanned" does not mean complete market coverage. Weekends use the DST-aware
+New York FX week. Unconfirmed broker holidays/maintenance remain unresolved.
+There are no intermediate candle exports.
+
+Full gap details and fresh database evidence are in
+`data/phase4b/verified-status.json`; compact progress is printed by `status`.
+See [the Phase 4B execution report](reports/phase4b-eurusd-history.md) for the
+availability probes, measured storage and latest verified checkpoint.
+
+## Phase 4A: EURUSD M1 quality and features
+
+Run a read-only audit against the isolated PostgreSQL test database. This command
+never loads application `DATABASE_URL`, accesses broker credentials, changes the
+collector, or writes to PostgreSQL. Set `PHASE4A_DATABASE_URL` privately to the
+existing test connection URL with an explicit loopback host and port **15432**;
+port 5432, omitted ports, remote hosts and URL query overrides are rejected.
+
+```powershell
+.\.venv\Scripts\python.exe -m trading.data.phase4a `
+  --output .\data\phase4a\my-new-snapshot
+```
+
+Each run requires a new output directory. Outputs are `quality.md`, `quality.json`
+and `dataset/{features.parquet,targets.parquet,manifest.json}`. The manifest lists
+feature formulas, configuration, source/data fingerprints and purged chronological
+split boundaries. Prediction timestamps mean candle close, not candle open.
+EMA levels/slopes/spread supplement the existing returns, RSI, ATR, volatility,
+volume and calendar features. Features and five-bar targets reset at every absent
+minute; gaps are never filled. Invalid/duplicate rows block dataset publication.
+
+The calendar uses Sunday 17:00 to Friday 17:00 New York time, including DST.
+Optional `--closures broker-closures.json` accepts confirmed half-open UTC
+`[{"start":"2026-12-25T00:00:00Z","end":"2026-12-26T00:00:00Z","reason":"example only"}]`
+intervals. Supply the actual broker schedule; this example is not a confirmed closure.
+Unconfirmed holidays and maintenance remain unresolved rather than being excused.
+Internal gaps and the incomplete tail through the snapshot time are reported separately.
+
+See [the measured Phase 4A report](reports/phase4a-eurusd-m1.md) for available data,
+bounded history probes, limitations and an authorization-dependent backfill plan.
+Run focused regression tests without a database:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_phase4a.py tests/test_phase_2b.py tests/test_storage_architecture.py -q --basetemp=data/phase4a-tests -p no:cacheprovider
+```
+
 ## Requirements
 
 - Python 3.12

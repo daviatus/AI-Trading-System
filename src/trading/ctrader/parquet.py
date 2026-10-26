@@ -4,7 +4,6 @@ from datetime import datetime
 from pathlib import Path
 
 from trading.data.domain import Candle
-from trading.data.parquet_store import export_partition
 
 CTRADER_PARQUET_PROVIDER = "ctrader_open_api_demo"
 
@@ -22,6 +21,10 @@ def persist_candles(
     output_root = Path(root)
     if output_root.exists() or output_root.is_symlink():
         raise FileExistsError(f"Parquet output already exists: {output_root}")
+
+    # PostgreSQL collectors import the provider constant without needing Arrow.
+    from trading.data.parquet_store import export_partition
+
     output_root.parent.mkdir(parents=True, exist_ok=True)
 
     reference = f"demo:EURUSD:M1:[{start.isoformat()},{end.isoformat()})"

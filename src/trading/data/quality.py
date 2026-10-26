@@ -133,12 +133,15 @@ def check_candle_quality(
     def record_gap(gap_start: datetime, missing_count: int) -> None:
         if missing_count <= 0:
             return
-        expected_count, closed_count = calendar.classify_missing_timestamps(
+        classify = getattr(calendar, "classify_missing_timestamps", None)
+        expected_count, closed_count = (classify(
             instrument,
             gap_start,
             missing_count,
             timeframe_minutes,
-        )
+        ) if classify else MarketCalendar.classify_missing_timestamps(
+            calendar, instrument, gap_start, missing_count, timeframe_minutes,
+        ))
         finding = GapFinding(
             missing_from=gap_start,
             missing_through=gap_start + interval * (missing_count - 1),

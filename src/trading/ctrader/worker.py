@@ -136,6 +136,7 @@ async def synchronize_worker_cycle(
 ) -> dict[str, Any]:
     """Synchronize one rolling window, monitor it, and persist enabled operations."""
     clock = now or (lambda: datetime.now(UTC))
+    instrument = getattr(service, "instrument", InstrumentCode.EURUSD)
     finished_at = clock()
     if finished_at.tzinfo is None or finished_at.utcoffset() != timedelta(0):
         raise ValueError("Worker clock must return a timezone-aware UTC datetime")
@@ -165,7 +166,7 @@ async def synchronize_worker_cycle(
         stored_records = [
             candle
             for candle, provider, _ in service.repository.iter_candle_records(
-                InstrumentCode.EURUSD,
+                instrument,
                 Timeframe.M1,
                 start,
                 end,
@@ -176,7 +177,7 @@ async def synchronize_worker_cycle(
         stored_timestamps = {
             candle.opened_at
             for candle in stored_records
-            if service.calendar.is_open(InstrumentCode.EURUSD, candle.opened_at)
+            if service.calendar.is_open(instrument, candle.opened_at)
         }
         latest = max(stored_timestamps, default=None)
     except SQLAlchemyError as error:
@@ -205,6 +206,7 @@ async def synchronize_worker_cycle(
         config,
         stored_candle_count=len(stored_timestamps) if not database_error_count else None,
         database_error_count=database_error_count,
+        instrument=instrument,
     )
 
     if database_error_count:
@@ -224,7 +226,7 @@ async def synchronize_worker_cycle(
     report = {
         "started_at": _format_utc(finished_at.astimezone(UTC)),
         "finished_at": _format_utc(clock().astimezone(UTC)),
-        "instrument": InstrumentCode.EURUSD.value,
+        "instrument": instrument.value,
         "timeframe": Timeframe.M1.label,
         "dry_run": dry_run,
         "postgres_write_enabled": save_postgres and not dry_run,
@@ -268,6 +270,7 @@ def evaluate_data_quality(
     *,
     stored_candle_count: int | None = None,
     database_error_count: int = 0,
+    instrument: InstrumentCode = InstrumentCode.EURUSD,
 ) -> DataQualityReport:
     expected = int(summary.get("expected_market_minutes", 0))
     stored = (
@@ -281,7 +284,7 @@ def evaluate_data_quality(
         max(0, int((now - latest_stored).total_seconds())) if latest_stored is not None else None
     )
     open_lag = (
-        _market_open_lag_minutes(calendar, latest_stored, now)
+        _market_open_lag_minutes(calendar, latest_stored, now, instrument)
         if latest_stored is not None
         else None
     )
@@ -375,13 +378,16 @@ def _retry_time(state: dict[str, Any]) -> datetime:
     return retry_at or datetime.min.replace(tzinfo=UTC)
 
 
-def _market_open_lag_minutes(calendar: Any, latest: datetime, now: datetime) -> int:
+def _market_open_lag_minutes(
+    calendar: Any, latest: datetime, now: datetime,
+    instrument: InstrumentCode = InstrumentCode.EURUSD,
+) -> int:
     latest = latest.astimezone(UTC).replace(second=0, microsecond=0)
     latest_expected = now.astimezone(UTC).replace(second=0, microsecond=0) - _MINUTE
     lag = 0
     timestamp = latest + _MINUTE
     while timestamp <= latest_expected:
-        if calendar.is_open(InstrumentCode.EURUSD, timestamp):
+        if calendar.is_open(instrument, timestamp):
             lag += 1
         timestamp += _MINUTE
     return lag
