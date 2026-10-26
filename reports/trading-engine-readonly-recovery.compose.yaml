@@ -1,0 +1,10 @@
+services:
+  trading-engine:
+    image: ai-trading-system-trading-engine:recovery-0005-20261022
+    pull_policy: never
+    entrypoint: []
+    command: ["uvicorn", "trading.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      PGOPTIONS: "-c default_transaction_read_only=on"
+      TRADING_MODE: "DEMO"
+      LIVE_EXECUTION_ENABLED: "false"

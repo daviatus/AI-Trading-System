@@ -1,0 +1,34 @@
+{
+  "ai-trading-system-trading-engine-1": {
+    "id": "71f5054f466f9fd74ed7da0c389dbbaaa70916bb1c7d0d7dd9cc23f111c6b704",
+    "image": "sha256:e3e83942f2284115f332c759bbd798cd9bf89277ebf12f307610a08470d2d011",
+    "status": "exited",
+    "started_at": "2026-10-22T16:57:21.917748475Z",
+    "restart_count": 1908,
+    "health": "unhealthy"
+  },
+  "ai-trading-system-db-1": {
+    "id": "8b29ab62c1c74f591b787dc79755c22751d3e96dcf2d485dd48f353b06bab0c3",
+    "image": "sha256:301bcb60b8a3ee4ab7e147932723e3abd1cef53516ce5210b39fd9fe5e3602ae",
+    "status": "running",
+    "started_at": "2026-10-21T18:29:42.712633096Z",
+    "restart_count": 0,
+    "health": "healthy"
+  },
+  "ctrader-worker-test": {
+    "id": "f3e6f1cb08ca3d8d8f2c451197c30d27f7cf935071dbdc0945fc60e7d5dba161",
+    "image": "sha256:301bcb60b8a3ee4ab7e147932723e3abd1cef53516ce5210b39fd9fe5e3602ae",
+    "status": "running",
+    "started_at": "2026-10-21T20:51:44.337293634Z",
+    "restart_count": 0,
+    "health": null
+  },
+  "ai-trading-ctrader-worker-ctrader-worker-1": {
+    "id": "8e2c4e61f484294a6c16e5aba164653cc10d51cded60cb81cad211f7cea13443",
+    "image": "sha256:9e0396e2c414caf7e4514c395d030b6b5cc6515f90cd560d22b51fac988cc2df",
+    "status": "running",
+    "started_at": "2026-10-21T21:28:16.369444304Z",
+    "restart_count": 1,
+    "health": "healthy"
+  }
+}
