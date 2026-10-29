@@ -1,0 +1,217 @@
+{
+  "version": "strat2h-diagnostics-protocol-v1",
+  "purpose": "exploratory frozen-model diagnostics only; no fitting, selection, orders or profitability claim",
+  "frozen": {
+    "journal": "data/research/strat2d-strat2g-resumed-v2",
+    "generation": 59,
+    "manifest_sha256": "547c3a16b7fb030f7daed32fbbffc5307d8bfa407881fe04786d169f18b9a491",
+    "receipt_sha256": "2bf8ddcc8f762dfacc4460845a04a68dbc88aea49073bcc1ec1d3dfb78503369",
+    "state_sha256": "df5443bc0294aad82785a2f40b67ed6e81a382ac80041e99cc91c386de624926",
+    "candidate_sha256": "bc72d1443ecca6ca69040ef814c521e23077d45a12ebb4f4a7fe4b95b2c967a6",
+    "reference_sha256": "1b2469a07b0f62e6bc48e43585c1fa8002be3326bf205b7091aac8988f4ecc1b",
+    "family": "linear12",
+    "model_schema": "strat2g-model-state-v1",
+    "target": "h15_cost",
+    "horizon_minutes": 15,
+    "spec": {
+      "features": [
+        "return_1_bps_div10",
+        "return_5_bps_div10",
+        "return_15_bps_div10",
+        "return_30_bps_div10",
+        "return_5_vol_normalized",
+        "sigma20_bps_div5",
+        "range_bps_div10",
+        "price_position20",
+        "mean_reversion20",
+        "completed_5m_return_div001",
+        "utc_time_sin",
+        "utc_time_cos"
+      ],
+      "kind": "online_softmax_v1",
+      "l2": 0.01,
+      "learning_rate": 0.003,
+      "scales": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "seed": 20261027,
+      "version": "strat2d-online-softmax-v1"
+    },
+    "training_rows": 11675,
+    "calibration_rows": 13428,
+    "log_temperature": 0.325014157440135,
+    "selection_rule": {
+      "metric": "selection calibrated log loss",
+      "minimum_rows": 1000,
+      "minimum_observed_days": 5,
+      "complexity_order": [
+        "reference8",
+        "linear12",
+        "interaction16"
+      ],
+      "minimum_absolute_logloss_improvement": 0.005,
+      "select_within_each_target_only": true,
+      "freeze_before_evaluation": true
+    },
+    "protocol_sha256": "c0514b40d6802b9ed14293852882ca5e8213fdb377a588000786eee591c35dcb"
+  },
+  "scope": {
+    "asset": "EURUSD",
+    "timeframe_minutes": 1,
+    "start": "2022-01-01T00:00:00Z",
+    "end_exclusive": "2022-03-01T00:00:00Z"
+  },
+  "splits": {
+    "train": [
+      "2022-01-01T00:00:00Z",
+      "2022-01-15T00:00:00Z"
+    ],
+    "calibration": [
+      "2022-01-15T00:00:00Z",
+      "2022-02-01T00:00:00Z"
+    ],
+    "selection": [
+      "2022-02-01T00:00:00Z",
+      "2022-02-15T00:00:00Z"
+    ],
+    "evaluation": [
+      "2022-02-15T00:00:00Z",
+      "2022-03-01T00:00:00Z"
+    ]
+  },
+  "embargo_minutes": 60,
+  "common_label_maturity_minutes": 30,
+  "purge": "common end strictly before split right; same G common eligible observations",
+  "january_status": "post-fit descriptive re-use of training/calibration; never generalization evidence",
+  "february_status": "previously examined exploratory selection/evaluation data",
+  "resource_profile": "config/strat2g-eurusd-2022-offline-120-v1.json",
+  "production_threshold": 0.55,
+  "thresholds": [
+    0.3,
+    0.35,
+    0.4,
+    0.45,
+    0.5,
+    0.55
+  ],
+  "probability_bin_width": 0.05,
+  "cost_scenarios_bps": [
+    1.1,
+    2.1,
+    3.1,
+    5.6
+  ],
+  "cost_components": {
+    "spread_bps": 1.0,
+    "slippage_bps_per_side": 0.25,
+    "roundtrip_commission_bps": 0.6,
+    "total_bps": 2.1,
+    "sensitivity_total_bps": [
+      1.1,
+      2.1,
+      3.1,
+      5.6
+    ]
+  },
+  "volatility_sigma20_bps_edges": [
+    0.5,
+    1.0,
+    2.0
+  ],
+  "return_histogram_bps_edges": [
+    -50,
+    -20,
+    -10,
+    -5,
+    -2.1,
+    -1,
+    0,
+    1,
+    2.1,
+    5,
+    10,
+    20,
+    50
+  ],
+  "uncertainty": {
+    "method": "paired circular observed-UTC-day block bootstrap; intraday overlaps stay together",
+    "block_days": [
+      2,
+      5
+    ],
+    "replicates": 1000,
+    "seed": 20261028,
+    "minimum_observed_days": 10,
+    "minimum_signal_days": 5,
+    "interval": "percentile 95%; exploratory, not selection-adjusted; nine G configurations previously examined"
+  },
+  "budgets": {
+    "history": 61,
+    "pending": 31,
+    "days": 64,
+    "groups": 100,
+    "event_batch": 1024
+  },
+  "calendar_status": "UNVERIFIED; unchanged frozen G conservative exclusions; no schedule migration",
+  "model_audit": {
+    "intercepts": [
+      0.625084610470833,
+      -0.34369060806923746,
+      -0.28139400240159623
+    ],
+    "coefficient_l2_by_class": [
+      0.5076229516508923,
+      0.2382240836098123,
+      0.3711829186020657
+    ],
+    "training_priors": [
+      0.48565310492505354,
+      0.257644539614561,
+      0.25670235546038545
+    ],
+    "calibration_priors": [
+      0.5011915400655347,
+      0.237116473041406,
+      0.2616919868930593
+    ],
+    "temperature": 1.3840502404504704,
+    "probability_gate_log_odds": 0.20067069546215124
+  },
+  "cost_scenarios_components": [
+    {
+      "spread_bps": 0.5,
+      "slippage_per_side_bps": 0,
+      "commission_roundtrip_bps": 0.6,
+      "total_bps": 1.1
+    },
+    {
+      "spread_bps": 1,
+      "slippage_per_side_bps": 0.25,
+      "commission_roundtrip_bps": 0.6,
+      "total_bps": 2.1
+    },
+    {
+      "spread_bps": 1.5,
+      "slippage_per_side_bps": 0.5,
+      "commission_roundtrip_bps": 0.6,
+      "total_bps": 3.1
+    },
+    {
+      "spread_bps": 3,
+      "slippage_per_side_bps": 1,
+      "commission_roundtrip_bps": 0.6,
+      "total_bps": 5.6
+    }
+  ]
+}

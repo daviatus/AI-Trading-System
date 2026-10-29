@@ -1,0 +1,177 @@
+{
+  "version": "strat2g-protocol-v1",
+  "purpose": "exploratory only; no production promotion or profitability claim",
+  "resource_profile": "config/strat2d-eurusd-2022-offline-130-validation-v1.json",
+  "scope": {
+    "asset": "EURUSD",
+    "timeframe_minutes": 1,
+    "start": "2022-01-01T00:00:00Z",
+    "end_exclusive": "2022-03-01T00:00:00Z"
+  },
+  "splits": {
+    "train": [
+      "2022-01-01T00:00:00Z",
+      "2022-01-15T00:00:00Z"
+    ],
+    "calibration": [
+      "2022-01-15T00:00:00Z",
+      "2022-02-01T00:00:00Z"
+    ],
+    "selection": [
+      "2022-02-01T00:00:00Z",
+      "2022-02-15T00:00:00Z"
+    ],
+    "evaluation": [
+      "2022-02-15T00:00:00Z",
+      "2022-03-01T00:00:00Z"
+    ]
+  },
+  "embargo_minutes": 60,
+  "common_label_maturity_minutes": 30,
+  "strict_purge": "common 30-minute label end strictly before split end",
+  "targets": [
+    {
+      "id": "h5_cost",
+      "horizon": 5,
+      "neutral_cost_bps": 2.1,
+      "volatility_multiple": 0.0
+    },
+    {
+      "id": "h15_cost",
+      "horizon": 15,
+      "neutral_cost_bps": 2.1,
+      "volatility_multiple": 0.0
+    },
+    {
+      "id": "h30_vol",
+      "horizon": 30,
+      "neutral_cost_bps": 2.1,
+      "volatility_multiple": 0.5
+    }
+  ],
+  "target_formula": "entry=next bar open; exit=close of horizon-th subsequent bar; gross=(exit/entry-1); LONG/SHORT if beyond max(cost,volatility_multiple*causal_sigma20*sqrt(horizon)); else FLAT",
+  "costs": {
+    "spread_bps": 1.0,
+    "slippage_bps_per_side": 0.25,
+    "roundtrip_commission_bps": 0.6,
+    "total_bps": 2.1,
+    "sensitivity_total_bps": [
+      1.1,
+      2.1,
+      3.1,
+      5.6
+    ]
+  },
+  "boundary_policy": {
+    "known_calendar": "frozen Phase 5 contract, unverified for 2022",
+    "blackout_NY_daily": [
+      "16:30",
+      "17:30"
+    ],
+    "weekend_buffer": "exclude Friday from16:00, all Saturday, Sunday before18:00 New York",
+    "require_contiguous_observed_path": true,
+    "reset_on_gap_or_exclusion": true,
+    "calendar_historical_verification": false
+  },
+  "feature_policy": {
+    "history_bars": 61,
+    "warmup_bars": 31,
+    "new_features": [
+      "return_1_bps_div10",
+      "return_5_bps_div10",
+      "return_15_bps_div10",
+      "return_30_bps_div10",
+      "return_5_vol_normalized",
+      "sigma20_bps_div5",
+      "range_bps_div10",
+      "price_position20",
+      "mean_reversion20",
+      "completed_5m_return_div001",
+      "utc_time_sin",
+      "utc_time_cos"
+    ],
+    "volatility_floor": 1e-06,
+    "new_feature_clip": 5.0,
+    "interactions": [
+      "z5*position20",
+      "r5*range",
+      "mean_reversion20_squared",
+      "sigma20*abs_r5"
+    ]
+  },
+  "models": [
+    {
+      "id": "reference8",
+      "features": "published causal original8",
+      "learning_rate": 0.005,
+      "l2": 0.001
+    },
+    {
+      "id": "linear12",
+      "features": "new12",
+      "learning_rate": 0.003,
+      "l2": 0.01
+    },
+    {
+      "id": "interaction16",
+      "features": "new12+four fixed interactions",
+      "learning_rate": 0.003,
+      "l2": 0.01
+    }
+  ],
+  "model_schema": "strat2g-model-state-v1",
+  "kernel": "original deterministic OnlineModel softmax update and scalar temperature calibration; no model substitution",
+  "seed": 20261027,
+  "matrix": {
+    "targets": 3,
+    "trainable_families_per_target": 3,
+    "trainable_configurations": 9,
+    "baselines_per_target": [
+      "majority",
+      "training_prior",
+      "momentum",
+      "mean_reversion"
+    ],
+    "raw_calibrated_diagnostics": true
+  },
+  "selection": {
+    "metric": "selection calibrated log loss",
+    "minimum_rows": 1000,
+    "minimum_observed_days": 5,
+    "complexity_order": [
+      "reference8",
+      "linear12",
+      "interaction16"
+    ],
+    "minimum_absolute_logloss_improvement": 0.005,
+    "select_within_each_target_only": true,
+    "freeze_before_evaluation": true
+  },
+  "signals": {
+    "threshold": 0.55,
+    "require_direction_beats_neutral": true,
+    "no_executions": true,
+    "turnover_proxy": "fixed target-horizon cooldown"
+  },
+  "uncertainty": {
+    "unit": "observed UTC-day sufficient-statistic blocks",
+    "circular_adjacent_day_lengths": [
+      2,
+      5
+    ],
+    "repetitions": 1000,
+    "percentiles": [
+      0.025,
+      0.975
+    ],
+    "paired": true
+  },
+  "budgets": {
+    "daily_records": 64,
+    "models": 9,
+    "pending_rows": 31,
+    "history_bars": 61
+  },
+  "confirmation_warning": "All Jan-Feb observations repeatedly inspected; final chronological slice remains exploratory, never independent confirmation.",
+  "conclusion_policy": "INCONCLUSIVE if sparse/short-span, selection insufficient, or paired day-block advantage unresolved. Exploratory PASS requires selected candidate improves both loss and balanced accuracy versus reference and prior with both block lengths, no promotion; failure to improve is not profitability proof."
+}

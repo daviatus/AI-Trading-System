@@ -94,7 +94,7 @@ def calendar_open(index, metadata):
     return session_open(index, metadata)
 
 
-def _segment_features(part, spec):
+def _segment_features(part, spec, *, averages=None, warmup_rows=None):
     close = part.close
     returns = close.pct_change(fill_method=None)
     result = {f"return_{lag}": close.pct_change(lag, fill_method=None) for lag in spec.return_lags}
@@ -106,8 +106,11 @@ def _segment_features(part, spec):
         [part.high - part.low, (part.high - prior).abs(), (part.low - prior).abs()], axis=1
     ).max(axis=1)
     result[atr_name] = true_range.rolling(spec.atr_window).mean() / close
-    fast = close.ewm(span=spec.fast_span, adjust=False, min_periods=spec.fast_span).mean()
-    slow = close.ewm(span=spec.slow_span, adjust=False, min_periods=spec.slow_span).mean()
+    if averages is None:
+        fast = close.ewm(span=spec.fast_span, adjust=False, min_periods=spec.fast_span).mean()
+        slow = close.ewm(span=spec.slow_span, adjust=False, min_periods=spec.slow_span).mean()
+    else:
+        fast, slow = averages
     result["ema_trend_spread"] = (fast - slow) / close
     result["ema_slope"] = slow.pct_change(5, fill_method=None)
     change = close.diff()
@@ -136,7 +139,7 @@ def _segment_features(part, spec):
             spec.volatility_window
         ).mean().replace(0, np.nan)
     frame = pd.DataFrame(result, index=part.index)
-    frame.iloc[: spec.warmup - 1] = np.nan
+    frame.iloc[: spec.warmup - 1 if warmup_rows is None else warmup_rows] = np.nan
     return frame
 
 

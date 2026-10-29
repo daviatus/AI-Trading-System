@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "version": "strat2d-eurusd-2022-engineering-v1",
+  "mode": "offline_simulation",
+  "threads": 1,
+  "asset": "EURUSD",
+  "prepared": "data/research/phase6-strat2c-eurusd-2022-jan-feb-validation-v1/prepared-streams/1d06fff895ee69a12b38/EURUSD",
+  "output": "data/research/strat2d-eurusd-2022-engineering-v1",
+  "start": "2022-01-01T00:00:00Z",
+  "train_end": "2022-01-15T00:00:00Z",
+  "calibration_end": "2022-02-01T00:00:00Z",
+  "test_end": "2022-03-01T00:00:00Z",
+  "embargo_minutes": 60,
+  "batch_rows": 1024,
+  "max_quality_intervals": 4096,
+  "minimum_available_ram_gib": 1.5,
+  "free_floor_gib": 15,
+  "max_worker_ram_gib": 1.0,
+  "timeout_seconds": 1800,
+  "quality_policy": "observed_contiguous_engineering",
+  "calendar": {
+    "version": "eurusd-current-contract-hypothesis-v1",
+    "timezone": "America/New_York",
+    "weekly_open_seconds": [
+      [
+        61260,
+        147540
+      ],
+      [
+        147660,
+        233940
+      ],
+      [
+        234060,
+        320340
+      ],
+      [
+        320460,
+        406740
+      ],
+      [
+        406860,
+        492900
+      ]
+    ],
+    "holidays": [],
+    "verified": false,
+    "evidence_fingerprint": "7c66edc0ac9ff95ad02c57e7fe3862ec9f482b2b716bdbf6b7524c7f605a562e",
+    "uncertainties": [
+      "Weekly rules are current exposed metadata, not verified for 2022.",
+      "No verified 2022 holiday schedule supplied; later dated holidays are not applied retroactively.",
+      "Observed continuous data supports engineering checks only, not historical session claims."
+    ]
+  },
+  "model": {
+    "kind": "online_softmax_v1",
+    "version": "strat2d-online-softmax-v1",
+    "seed": 20261027,
+    "features": [
+      "return_1",
+      "return_5",
+      "volatility_20",
+      "atr_fraction_14",
+      "ema_trend_spread",
+      "rsi_14",
+      "body_fraction",
+      "range_fraction"
+    ],
+    "scales": [
+      0.001,
+      0.001,
+      0.001,
+      0.001,
+      0.001,
+      100.0,
+      0.001,
+      0.001
+    ],
+    "learning_rate": 0.005,
+    "l2": 0.001
+  },
+  "portfolio": {
+    "version": "strat2d-cfd-reference-v1",
+    "initial_equity": 10000.0,
+    "risk_fraction": 0.0025,
+    "leverage": 1.0,
+    "max_positions": 1,
+    "minimum_quantity": 1000.0,
+    "quantity_step": 1000.0,
+    "maximum_quantity": 10000000.0,
+    "spread_bps": 1.0,
+    "slippage_bps": 0.25,
+    "commission_bps_roundtrip": 0.6,
+    "stop_multiple": 2.0,
+    "reward_risk": 3.0,
+    "horizon_minutes": 15,
+    "threshold": 0.55,
+    "cost_evidence": "Explicit unverified reference-price scenario; no financing/FX conversion inferred."
+  }
+}

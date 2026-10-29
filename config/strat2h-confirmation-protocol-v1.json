@@ -1,0 +1,224 @@
+{
+  "version": "strat2h-confirmation-protocol-v1",
+  "status": "DESIGN ONLY; no authorization to read proposed data",
+  "frozen_candidate": {
+    "journal": "data/research/strat2d-strat2g-resumed-v2",
+    "generation": 59,
+    "manifest_sha256": "547c3a16b7fb030f7daed32fbbffc5307d8bfa407881fe04786d169f18b9a491",
+    "receipt_sha256": "2bf8ddcc8f762dfacc4460845a04a68dbc88aea49073bcc1ec1d3dfb78503369",
+    "state_sha256": "df5443bc0294aad82785a2f40b67ed6e81a382ac80041e99cc91c386de624926",
+    "candidate_sha256": "bc72d1443ecca6ca69040ef814c521e23077d45a12ebb4f4a7fe4b95b2c967a6",
+    "reference_sha256": "1b2469a07b0f62e6bc48e43585c1fa8002be3326bf205b7091aac8988f4ecc1b",
+    "family": "linear12",
+    "model_schema": "strat2g-model-state-v1",
+    "target": "h15_cost",
+    "horizon_minutes": 15,
+    "spec": {
+      "features": [
+        "return_1_bps_div10",
+        "return_5_bps_div10",
+        "return_15_bps_div10",
+        "return_30_bps_div10",
+        "return_5_vol_normalized",
+        "sigma20_bps_div5",
+        "range_bps_div10",
+        "price_position20",
+        "mean_reversion20",
+        "completed_5m_return_div001",
+        "utc_time_sin",
+        "utc_time_cos"
+      ],
+      "kind": "online_softmax_v1",
+      "l2": 0.01,
+      "learning_rate": 0.003,
+      "scales": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "seed": 20261027,
+      "version": "strat2d-online-softmax-v1"
+    },
+    "training_rows": 11675,
+    "calibration_rows": 13428,
+    "log_temperature": 0.325014157440135,
+    "selection_rule": {
+      "metric": "selection calibrated log loss",
+      "minimum_rows": 1000,
+      "minimum_observed_days": 5,
+      "complexity_order": [
+        "reference8",
+        "linear12",
+        "interaction16"
+      ],
+      "minimum_absolute_logloss_improvement": 0.005,
+      "select_within_each_target_only": true,
+      "freeze_before_evaluation": true
+    },
+    "protocol_sha256": "c0514b40d6802b9ed14293852882ca5e8213fdb377a588000786eee591c35dcb"
+  },
+  "features": {
+    "history_bars": 61,
+    "warmup_bars": 31,
+    "new_features": [
+      "return_1_bps_div10",
+      "return_5_bps_div10",
+      "return_15_bps_div10",
+      "return_30_bps_div10",
+      "return_5_vol_normalized",
+      "sigma20_bps_div5",
+      "range_bps_div10",
+      "price_position20",
+      "mean_reversion20",
+      "completed_5m_return_div001",
+      "utc_time_sin",
+      "utc_time_cos"
+    ],
+    "volatility_floor": 1e-06,
+    "new_feature_clip": 5.0,
+    "interactions": [
+      "z5*position20",
+      "r5*range",
+      "mean_reversion20_squared",
+      "sigma20*abs_r5"
+    ]
+  },
+  "target": {
+    "id": "h15_cost",
+    "horizon": 15,
+    "neutral_cost_bps": 2.1,
+    "volatility_multiple": 0.0
+  },
+  "label_formula": "entry=next bar open; exit=close of horizon-th subsequent bar; gross=(exit/entry-1); LONG/SHORT if beyond max(cost,volatility_multiple*causal_sigma20*sqrt(horizon)); else FLAT",
+  "training_calibration": {
+    "splits": {
+      "train": [
+        "2022-01-01T00:00:00Z",
+        "2022-01-15T00:00:00Z"
+      ],
+      "calibration": [
+        "2022-01-15T00:00:00Z",
+        "2022-02-01T00:00:00Z"
+      ],
+      "selection": [
+        "2022-02-01T00:00:00Z",
+        "2022-02-15T00:00:00Z"
+      ],
+      "evaluation": [
+        "2022-02-15T00:00:00Z",
+        "2022-03-01T00:00:00Z"
+      ]
+    },
+    "model_updates": "none; frozen January-2022 weights, temperature and training priors; no refit or recalibration",
+    "purging_minutes": 30,
+    "embargo_minutes": 60
+  },
+  "proposed_period": {
+    "start": "2022-03-01T00:00:00Z",
+    "end_exclusive": "2022-06-01T00:00:00Z",
+    "justification": "next three chronological months after development, spanning a DST change; limits age of the frozen model; proposal only",
+    "access": "PROHIBITED until later explicit user authorization",
+    "untouched_status": "UNVERIFIED; audit prior research/access records before authorization; if previously examined, preregister a replacement without viewing outcomes"
+  },
+  "freeze_rules": [
+    "one selected candidate; no model family/feature/target/threshold changes",
+    "one scheduled evaluation after evidence requirements are met; no rolling peeks or optional stopping",
+    "hash and timestamp protocol before later authorization and any data access",
+    "no choosing another candidate after seeing confirmation; amendments create a new exploratory study",
+    "all failed or blocked runs preserved; no selective reporting"
+  ],
+  "benchmarks": [
+    "frozen h15 reference8 calibrated",
+    "frozen training empirical class-prior probabilities",
+    "majority class",
+    "causal return_5 momentum and mean reversion"
+  ],
+  "primary_metrics": [
+    "balanced accuracy",
+    "multiclass log loss"
+  ],
+  "secondary_metrics": [
+    "Brier score",
+    "per-class precision/recall",
+    "class reliability and ECE",
+    "conditional forward bps",
+    "0.55 gated signal frequency and net hypothetical movement"
+  ],
+  "uncertainty": {
+    "method": "paired circular UTC-day block bootstrap, preserving all intraday overlaps",
+    "block_days": [
+      2,
+      5
+    ],
+    "replicates": 5000,
+    "seed": 20261028,
+    "confidence": 0.95,
+    "multiplicity": "joint success across BOTH metrics and BOTH primary benchmarks at BOTH block lengths; one preregistered candidate, no post-hoc subset selection; exploratory G uncertainty is not confirmation"
+  },
+  "minimum_evidence": {
+    "eligible_rows": 20000,
+    "observed_utc_days": 40,
+    "each_actual_class_rows": 1000,
+    "directional_economic_claims": {
+      "signals_at_unchanged_055": 200,
+      "distinct_signal_days": 20,
+      "nonoverlapping_horizon_windows": 100
+    },
+    "insufficient_counts": "INCONCLUSIVE, never lower confidence threshold or extend range automatically"
+  },
+  "acceptance": {
+    "predictive": "All primary paired 95% CIs: candidate-minus-benchmark log-loss upper<0 AND balanced-accuracy lower>0 at both block lengths; data/calendar/replay gates all pass",
+    "economic": "separate from predictive acceptance: sufficient 0.55 signal evidence, validated bid/ask and execution/calendar assumptions, and dependence-aware net movement lower CI>0 under base and 3.1bps stress; no profitability claim from classification",
+    "rejection": "FAIL predictive if dependence-aware CI shows worse loss AND no accuracy advantage against both benchmarks; FAIL economics if sufficient evidence and net upper CI<=0; otherwise INCONCLUSIVE",
+    "no_signals": "economic advantage unestablished; never manufacture trades"
+  },
+  "costs": {
+    "spread_bps": 1.0,
+    "slippage_bps_per_side": 0.25,
+    "roundtrip_commission_bps": 0.6,
+    "total_bps": 2.1,
+    "sensitivity_total_bps": [
+      1.1,
+      2.1,
+      3.1,
+      5.6
+    ]
+  },
+  "cost_sensitivity_total_bps": [
+    1.1,
+    2.1,
+    3.1,
+    5.6
+  ],
+  "data_quality": [
+    "verified broker/account/instrument historical session and holiday schedule including DST",
+    "UTC timestamp lineage and price-side semantics established",
+    "strict minute alignment, monotonicity and sealed partition checksums",
+    "no fill of missing candles; no labels across gaps/unverified boundaries",
+    "record exclusions before metrics; identical eligible timestamps across comparators"
+  ],
+  "checkpoint_replay": [
+    "source/protocol/model/code/environment hashes bound in immutable atomic journal",
+    "hard-crash before commit; immutable prefix and repeat-resume checks",
+    "independent uninterrupted replay, every committed file and canonical-state hash identical",
+    "independent event metric and label verifier"
+  ],
+  "resource_profile": "separate explicitly authorized profile required for new dates; current 1.20 profile remains Jan-Feb only",
+  "restrictions": [
+    "no 2026 holdout",
+    "no full-year backtest",
+    "offline only; no trading/broker/Docker",
+    "no new historical access in STRAT-2H",
+    "no production promotion"
+  ],
+  "decision_if_H_disappointing": "protocol remains frozen; recommend further causal research or defer confirmation; no automatic execution"
+}

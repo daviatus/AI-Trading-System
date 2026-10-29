@@ -1,0 +1,20 @@
+.gitattributes -text
+# Research journals bind exact bytes. Preserve published CRLF/LF as-is even
+# when the workstation enables core.autocrlf; do not renormalize these files.
+src/trading/research/strat2*/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+src/trading/research/phase6/streaming.py -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+src/trading/research/phase6/controller.py -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+src/trading/research/phase6/features.py -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+src/trading/research/phase6/runner.py -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+src/trading/research/safety.py -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+config/strat2*.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+config/phase6-strat2c-*.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+reports/strat-2*.md -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+reports/*-2026-10-29.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+reports/ai-trading-next-chat-handoff-2026-10-29.md -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+tools/strat2*.py -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+tests/test_strat2*.py -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+tests/test_phase6_startup.py -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+tests/test_phase6_streaming.py -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+tests/test_phase6_controller.py -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+reports/publication/*.md -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

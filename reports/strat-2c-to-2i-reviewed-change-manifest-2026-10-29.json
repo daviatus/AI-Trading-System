@@ -1,0 +1,700 @@
+{
+  "version": "research-reviewed-change-manifest-2026-10-29-v1",
+  "authorization": "User explicitly authorized normal commit and push of reviewed C-I changes on existing feature branch; no NN implementation",
+  "git": {
+    "root": "C:/Users/jager/ai_trader/AI-Trading-STRAT-2C",
+    "branch": "feature/strat-2c-multimonth-checkpoint",
+    "base_commit": "86d086d92e2226a199e51bfbb690a97b41b87fd0",
+    "remote": "origin",
+    "remote_url": "https://github.com/daviatus/AI-Trading-System.git",
+    "upstream_before": null,
+    "remote_feature_branch_before": "absent (verified ls-remote)",
+    "push_plan": "normal git push --set-upstream origin HEAD:refs/heads/feature/strat-2c-multimonth-checkpoint; verify exact remote SHA afterward"
+  },
+  "files_to_commit": [
+    {
+      "path": ".gitattributes",
+      "bytes": 1891,
+      "sha256": "89e55152dfae9ea30ad2f48d399b12d57b32facccf662a605e2fbde372fa57f5",
+      "change": "added"
+    },
+    {
+      "path": "config/phase6-strat2c-eurusd-2022-jan-feb-validation-v1.json",
+      "bytes": 5314,
+      "sha256": "88f7ac3a2fed8876f0b3f19ba9fb5673ab6ec0d6639361b1d6efc2d0a123bc3c",
+      "change": "added"
+    },
+    {
+      "path": "config/strat2d-eurusd-2022-engineering-v1.json",
+      "bytes": 2619,
+      "sha256": "29b0f91ffdf195a1cfebc3a67cc8dd75df285de96035c717a37c9bad7bf019a7",
+      "change": "added"
+    },
+    {
+      "path": "config/strat2d-eurusd-2022-memory-validation-v1.json",
+      "bytes": 2632,
+      "sha256": "ecbf3ba8198c4c508cf3945abfe6e15b499d872dc26701fa31494a834d6e32f9",
+      "change": "added"
+    },
+    {
+      "path": "config/strat2d-eurusd-2022-offline-130-validation-v1.json",
+      "bytes": 2800,
+      "sha256": "f7d4959bbf573fade3a37d36991d73d3c711b488a66b3a6499182b5f7e5305b7",
+      "change": "added"
+    },
+    {
+      "path": "config/strat2e-eurusd-2022-calendar-evidence-v1.json",
+      "bytes": 2330,
+      "sha256": "8dd74dde19e0bb9ef9e75048be4a8f9864e39523635fd3a549e79988cffaaa86",
+      "change": "added"
+    },
+    {
+      "path": "config/strat2g-eurusd-2022-offline-120-v1.json",
+      "bytes": 2929,
+      "sha256": "c74102566d91cf6ce40c604245eaa23cf12927d90d89c6ce0ce9535070b6996f",
+      "change": "added"
+    },
+    {
+      "path": "config/strat2g-protocol-v1.json",
+      "bytes": 5040,
+      "sha256": "c0514b40d6802b9ed14293852882ca5e8213fdb377a588000786eee591c35dcb",
+      "change": "added"
+    },
+    {
+      "path": "config/strat2h-calendar-review-v1.json",
+      "bytes": 3627,
+      "sha256": "0b3c16bb0dff4e977404b2b1bbee667ab7c6ba4224c62673660297284a8aa8b6",
+      "change": "added"
+    },
+    {
+      "path": "config/strat2h-confirmation-protocol-v1.json",
+      "bytes": 8198,
+      "sha256": "aafed48adcec00f1c19d70ec3968546d905e8a98e690c2ee215657add99be939",
+      "change": "added"
+    },
+    {
+      "path": "config/strat2h-diagnostics-protocol-v1.json",
+      "bytes": 5463,
+      "sha256": "25be0a4cd4b192831ab4734bcd49efb5c25d27c006f9a3303479733670760d93",
+      "change": "added"
+    },
+    {
+      "path": "config/strat2h-eurusd-2022-offline-100-v1.json",
+      "bytes": 2440,
+      "sha256": "0e5448acb08bfa038207439ded17dff95cc2283f14c1b965b15b746a85feff44",
+      "change": "added"
+    },
+    {
+      "path": "config/strat2i-confirmation-protocol-proposal-v2.json",
+      "bytes": 8247,
+      "sha256": "b280fc6e3cbbed195f72c6c485b2d2b6e613ca2334d51a30d3776ad44cb98ed1",
+      "change": "added"
+    },
+    {
+      "path": "config/strat2i-data-quality-economic-research-v1.json",
+      "bytes": 9676,
+      "sha256": "17c4363fe8e6c78bd22b05065acd96b1929ad0138642d675682fe3b88a32b732",
+      "change": "added"
+    },
+    {
+      "path": "reports/ai-trading-next-chat-handoff-2026-10-29.md",
+      "bytes": 15607,
+      "sha256": "e65b570f167a59622789ba877938b42f0c42328c23745bcfd1e1667e67cc5d3a",
+      "change": "added"
+    },
+    {
+      "path": "reports/strat-2c-2022-validation-preparation-v1.md",
+      "bytes": 13355,
+      "sha256": "0f6ee997910f257e3c15b20fd1b5a991d1c26e583704fe680a8dcc6b22410ead",
+      "change": "added"
+    },
+    {
+      "path": "reports/strat-2c-eurusd-2022-complete-validation-v1.md",
+      "bytes": 18605,
+      "sha256": "89741fb969858e76d734ea02b35a5173ca1ea79a194d434f6300abd7c70d8a55",
+      "change": "added"
+    },
+    {
+      "path": "reports/strat-2c-startup-failure-fix-v1.md",
+      "bytes": 10976,
+      "sha256": "7e3c82b61e52f026ff5385eee0cb5748a3d13f774480171209c190cc1f329038",
+      "change": "added"
+    },
+    {
+      "path": "reports/strat-2c-streaming.md",
+      "bytes": 10246,
+      "sha256": "67a43f380bbd2f95dc11ad926e79cb4df5080c07840c53007104ed4570dc1ab1",
+      "change": "added"
+    },
+    {
+      "path": "reports/strat-2c-to-2i-artifact-manifest-2026-10-29.json",
+      "bytes": 189787,
+      "sha256": "4b42391d0fb4ec5e880b40e587f819e2e7a7ddc75dba19e39d6e272e72f06295",
+      "change": "added"
+    },
+    {
+      "path": "reports/strat-2c-to-2i-reviewed-change-manifest-2026-10-29.json",
+      "sha256": "SELF ? obtain from Git blob after commit",
+      "purpose": "reviewed change manifest"
+    },
+    {
+      "path": "reports/strat-2c-to-2i-technical-review-2026-10-29.md",
+      "bytes": 23422,
+      "sha256": "019ea2636e979fba990e2f98603505ce498788cd13b3358a0f1447cf0fd014e3",
+      "change": "added"
+    },
+    {
+      "path": "reports/strat-2d-eurusd-2022-historical-validation-v1.md",
+      "bytes": 79394,
+      "sha256": "6b6f9c7516a6b1df415785d0f8a6ac62945438a0d3778dd7449efcc2ed8cc6dd",
+      "change": "added"
+    },
+    {
+      "path": "reports/strat-2d-implementation-plan-v1.md",
+      "bytes": 2023,
+      "sha256": "211f6690ea70e841250b2ac33f2df77b4c0268f8ea5ad736b03dcad5da1987cf",
+      "change": "added"
+    },
+    {
+      "path": "reports/strat-2d-memory-optimization-v1.md",
+      "bytes": 19887,
+      "sha256": "20682404729059069b0c5c088cb507422dc95fab845679fc0d7ef9e05cc5a419",
+      "change": "added"
+    },
+    {
+      "path": "reports/strat-2d-streaming-training-backtest-v1.md",
+      "bytes": 16681,
+      "sha256": "fb0bb928aaf5ec2bcd893e5c1730b6b3d6f6032d40804c137b26e03e8595bbc7",
+      "change": "added"
+    },
+    {
+      "path": "reports/strat-2f-model-diagnostics-signal-quality-v1.md",
+      "bytes": 35661,
+      "sha256": "b96feecb60e0959eac17223fcd01edd9814772a1e16415d84facf8b76ef5a0b5",
+      "change": "added"
+    },
+    {
+      "path": "reports/strat-2g-predictive-model-improvement-v1.md",
+      "bytes": 49535,
+      "sha256": "1acf58b203f433be8ef63a2ead8aad68e7f30f1a2d6922ce30e0de630753f676",
+      "change": "added"
+    },
+    {
+      "path": "reports/strat-2h-signal-quality-independent-validation-v1.md",
+      "bytes": 34263,
+      "sha256": "a09c2082fc3169be0c05a3f7b1e7789bcf7fe5f27a1742111d9cfb7834575833",
+      "change": "added"
+    },
+    {
+      "path": "reports/strat-2i-data-integrity-economic-signal-v1.md",
+      "bytes": 34297,
+      "sha256": "1595393fbdd801b1adb0a08f7d0e3db4780788caefc77d09436fd636196f3542",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/phase6/controller.py",
+      "bytes": 18197,
+      "sha256": "efe170e9e4dda81a92fb1996159adcf74668c37556a310995ef70ff59e56a374",
+      "change": "modified"
+    },
+    {
+      "path": "src/trading/research/phase6/features.py",
+      "bytes": 12244,
+      "sha256": "02a06f36dfe11457e71bf6ff3ecbac14e60914952251ad9c1e4fb1eba001a2b9",
+      "change": "modified"
+    },
+    {
+      "path": "src/trading/research/phase6/runner.py",
+      "bytes": 37849,
+      "sha256": "baa24617f5e24f99d3d9bf6acc58521f944ce9e2984dda50dcd41ee11bf454e8",
+      "change": "modified"
+    },
+    {
+      "path": "src/trading/research/phase6/streaming.py",
+      "bytes": 21190,
+      "sha256": "fe1b929d0f7916f4fc5d21590c43a905f84a7466b12cbc5079de38b78962ef69",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/safety.py",
+      "bytes": 2953,
+      "sha256": "6225ced13b5269072377039c18c1393aec9e37aec88647b82839d8da1039e721",
+      "change": "modified"
+    },
+    {
+      "path": "src/trading/research/strat2d/__init__.py",
+      "bytes": 78,
+      "sha256": "ff94cc419b18bae010fe5be8b43dbf4b01c25c790d15e066b17b39633a06a954",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2d/calendar.py",
+      "bytes": 6860,
+      "sha256": "2e341babe671903a5b3a1c822ad38e0abef1cd6b464ef15563398936e99b57f3",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2d/journal.py",
+      "bytes": 6166,
+      "sha256": "e95ae0695e39442a8c037e43d96643a207519403a849b2f1ed431ddcf826f89e",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2d/model.py",
+      "bytes": 5455,
+      "sha256": "b21582a249f8833701767c4fdb88b8c8bd9522f735dab96b5be2964cc06afa31",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2d/pipeline.py",
+      "bytes": 26160,
+      "sha256": "a070ad97d2eba3190a7ddef8a2d3b53bdf96bdb0a489cc986abca1e3de19921b",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2d/portfolio.py",
+      "bytes": 12640,
+      "sha256": "0a143841c3221b9002c5e16947ec7f2b6b40091dfe70893807ef9c515bb5594e",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2d/prepared.py",
+      "bytes": 4324,
+      "sha256": "4cf769323bef8d3dd44e0663d7e94a18e61192ff510cb861bc3b702a20727891",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2d/runner.py",
+      "bytes": 1977,
+      "sha256": "183828930670bcc0c551a07f25347c601b81b1f05d2d8c39188e307cb30b4788",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2d/runtime.py",
+      "bytes": 2224,
+      "sha256": "476a5a2f646f162bc94f878c0b72f4b7c75642f93b9ec3fcb0945466348f863b",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2e/__init__.py",
+      "bytes": 60,
+      "sha256": "c9567e385d88f9dd030c3e66a5de1c365d9ba74ed10875afcf48de986ffc2495",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2e/audit.py",
+      "bytes": 14032,
+      "sha256": "bbab1b17cefc518b0b836a55d0f8d916d830d430ee40bdf11e82f205224602f0",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2f/__init__.py",
+      "bytes": 80,
+      "sha256": "2bd854e9d9b848c66ce8bb379ee9485014c556c2e23752692866255844687e7e",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2f/analysis.py",
+      "bytes": 4949,
+      "sha256": "c67735061ed500d3b1cb2c4c2e7ea1b8b320253072307aef233efbe171bece34",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2f/metrics.py",
+      "bytes": 6131,
+      "sha256": "f0323226b893a6a3d50404f8cd627fb13784e19a98c30dfef783a0e61e43a9dd",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2f/pipeline.py",
+      "bytes": 15111,
+      "sha256": "57593e5b1d8637b635d15970f94c9c16117ec82ff6b2b1567d71f98f17bf1b44",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2f/report.py",
+      "bytes": 26986,
+      "sha256": "122aaf7fbbac48ba1d53212817d3cd95261dd515c2b94245efc06ae63d54cb35",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2f/verify.py",
+      "bytes": 3268,
+      "sha256": "af182a2f1b6acbdb2e5a685fb21a8e9876ec2165594bbf2779ac3e0373b5b296",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2g/__init__.py",
+      "bytes": 75,
+      "sha256": "e5de0f148d8f6038191fb975ff5a3e662d75f0359994547a7976ba3bd9d86286",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2g/analysis.py",
+      "bytes": 7471,
+      "sha256": "4e081bdf919ab5684181c8b0f50003ea3fb5c609cc7745808efd6f6f4d2280e2",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2g/core.py",
+      "bytes": 6608,
+      "sha256": "7539b4066907c8703befacaffbd47945e3270cbbf7a77543bbad45b8deb56ce7",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2g/pipeline.py",
+      "bytes": 12322,
+      "sha256": "f611b1f26f1ee376874c691b3f1f77ea156194f8ea6805c848de8fd801e33e1a",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2g/report.py",
+      "bytes": 27799,
+      "sha256": "46b99e257643b38d8c9b3911737b67859ecfd0e1204bb377232fd7437c2ed60e",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2g/resources.py",
+      "bytes": 2862,
+      "sha256": "6bce0088555bca8ffcfbac1d27253e54bc6651178086d0f8cdcdae5a485df58d",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2h/__init__.py",
+      "bytes": 84,
+      "sha256": "4e25f6deec59fcabf08fd385e17a7432d65472232af7b04a0594ac09989d3a9e",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2h/analysis.py",
+      "bytes": 13488,
+      "sha256": "f7fd6a3cb2012bacebd18bd8759d5028a6338b5854d079c499bc7a1f1c48959f",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2h/pipeline.py",
+      "bytes": 12623,
+      "sha256": "f60f4edceea0a14975e53c4a2c680d65e5398b074b5b7b0b6c95b71a1fa1c4cd",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2h/report.py",
+      "bytes": 27268,
+      "sha256": "b8b5263585b41f7bbefac99c0570ccade4607c4f58ca0c0c80020c1b8b6e6ec5",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2h/resources.py",
+      "bytes": 2071,
+      "sha256": "b61f9adc2718fe3f4ea2095558faaf6b7b2330f3612c3d2cc868ad236ddfc0bf",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2h/statistics.py",
+      "bytes": 8135,
+      "sha256": "b00055123de8c419c69f87e92891f7d0572580790fa9a9dbdd1cbd639bf5ff10",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2i/__init__.py",
+      "bytes": 73,
+      "sha256": "07b2f6a0fbe27b90bfdcc5c1007c165a3f46af4fa93916e2f6ce363350d1051b",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2i/analysis.py",
+      "bytes": 8132,
+      "sha256": "d7687c3a35d96c30422c854c804c2d72f8e11199183429ad4d0a0c4ffa5913e7",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2i/economics.py",
+      "bytes": 5066,
+      "sha256": "2897441222c6c60aa71554c23f705f62b72f2a3e750c1548646c92f6a3cf2690",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2i/pipeline.py",
+      "bytes": 13669,
+      "sha256": "6967898c650c3ad22742a1344ba921f9e1a5257aa85f130abe2c6842b30aa736",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2i/quality.py",
+      "bytes": 5569,
+      "sha256": "ef6c488745e3d1c52287f010588d2ca6f4221afc84132ca333a0f0d5df46c87a",
+      "change": "added"
+    },
+    {
+      "path": "src/trading/research/strat2i/report.py",
+      "bytes": 24232,
+      "sha256": "1a1c818939c37e6c24099d47a978bf2ea3abdbd3dcc197af3ddb8208591c7dbf",
+      "change": "added"
+    },
+    {
+      "path": "tests/test_phase6_controller.py",
+      "bytes": 6306,
+      "sha256": "4fd6edadbf786162047eedc311e231d356210950726a73bd78fe5e5cc6e2eb0e",
+      "change": "modified"
+    },
+    {
+      "path": "tests/test_phase6_startup.py",
+      "bytes": 8903,
+      "sha256": "10752e0e509a1dafa8e968b2def01ed535591fd28b2f3ac1377753f7466189cc",
+      "change": "added"
+    },
+    {
+      "path": "tests/test_phase6_streaming.py",
+      "bytes": 17961,
+      "sha256": "f006ad3cb5bdf8dbc3154e7e322152aa6017097159326a656f825871040b8cd1",
+      "change": "added"
+    },
+    {
+      "path": "tests/test_strat2c_stream_validation.py",
+      "bytes": 3138,
+      "sha256": "c9a401b2b6db3eae2c2242c3709d9ab82e746e43a4f72d1c4ef629759f1356b2",
+      "change": "added"
+    },
+    {
+      "path": "tests/test_strat2c_validation_config.py",
+      "bytes": 4698,
+      "sha256": "9ba8282ff6f719fbb7068ea925e3a435668690970f44fca9234046f826291abe",
+      "change": "added"
+    },
+    {
+      "path": "tests/test_strat2d.py",
+      "bytes": 20440,
+      "sha256": "97b00d22eba68d6877725b483bd4d8ceb2b97863e84adf319e733f042cfe815d",
+      "change": "added"
+    },
+    {
+      "path": "tests/test_strat2d_memory.py",
+      "bytes": 2368,
+      "sha256": "ab57e837cbfd834b863c1ec0fe14bfe609856330802368cf5703b6704d94558e",
+      "change": "added"
+    },
+    {
+      "path": "tests/test_strat2d_resource_profile.py",
+      "bytes": 3053,
+      "sha256": "56f4ffc0d0ebaaabdbeb7ea0874203f76b79a6a776c092e8f1ca315d634da2d4",
+      "change": "added"
+    },
+    {
+      "path": "tests/test_strat2e.py",
+      "bytes": 8392,
+      "sha256": "0e550100af6da1bdbd5317c3ca9664eaccd74471235eb439ce236064b16236c8",
+      "change": "added"
+    },
+    {
+      "path": "tests/test_strat2e_postmortem.py",
+      "bytes": 4136,
+      "sha256": "212bb571439fc77bb3517e7a5f5cc0f9c7ec0f4911c41f0edc1b278fbeb40ff2",
+      "change": "added"
+    },
+    {
+      "path": "tests/test_strat2f.py",
+      "bytes": 7243,
+      "sha256": "a975ec019d8cc20540507ef1539dd4fbc521409e0e0d9e1ad90eeeca000677fd",
+      "change": "added"
+    },
+    {
+      "path": "tests/test_strat2f_verify.py",
+      "bytes": 3403,
+      "sha256": "64a9e71ef9bc261f758f3b9d32941da0e310ba85fb6f2807d4de813b7f87506a",
+      "change": "added"
+    },
+    {
+      "path": "tests/test_strat2g.py",
+      "bytes": 8648,
+      "sha256": "5ba3cc58217073945dd547d1060c17043c7e27b92edd463b0fc22eb804104b2b",
+      "change": "added"
+    },
+    {
+      "path": "tests/test_strat2g_resources.py",
+      "bytes": 4097,
+      "sha256": "42e1094ea09579f050ff2a96ef58fa8f0762b78ed24ff8d5def15aa356bca5f2",
+      "change": "added"
+    },
+    {
+      "path": "tests/test_strat2h.py",
+      "bytes": 15392,
+      "sha256": "2e6e743b61a99da08802648c89f2a94a4d1d29732a48acfd321446b14e160baa",
+      "change": "added"
+    },
+    {
+      "path": "tests/test_strat2h_resources.py",
+      "bytes": 3357,
+      "sha256": "4b460ddeaa82f93542571bd987d08d00b2453c778ad999163454cc190503ccf9",
+      "change": "added"
+    },
+    {
+      "path": "tests/test_strat2i.py",
+      "bytes": 10900,
+      "sha256": "6769408a8035560055005cbca49b1a0719365ce5ff4fad69d6f861cec9bf96a7",
+      "change": "added"
+    },
+    {
+      "path": "tools/strat2c_stream_validation.py",
+      "bytes": 32964,
+      "sha256": "1158bf13958e1cd0b3edf60fd0639820058b7bfcc436d51cb13ff4ad9ed985c8",
+      "change": "added"
+    },
+    {
+      "path": "tools/strat2d_historical_130_validation.py",
+      "bytes": 18383,
+      "sha256": "373d65279c58896ddadca972b88cc9b7497365f87ad2709bb73e03efa625aa17",
+      "change": "added"
+    },
+    {
+      "path": "tools/strat2d_memory_profile.py",
+      "bytes": 16620,
+      "sha256": "7aa008ccf049e8be57dabf804d3c34518010ff8bca56e38f326c7b8bc9c28482",
+      "change": "added"
+    },
+    {
+      "path": "tools/strat2d_validation.py",
+      "bytes": 23887,
+      "sha256": "4e3cbd61fc5d93b191feaa8bba2603bdd8e9e90551b6868f604d49b7a4889e33",
+      "change": "added"
+    },
+    {
+      "path": "tools/strat2e_validation.py",
+      "bytes": 6350,
+      "sha256": "3a5b1c21dbe69016e378013fcef31e914b1ebbb54e0dae0d3cde9360999c8d08",
+      "change": "added"
+    },
+    {
+      "path": "tools/strat2f_validation.py",
+      "bytes": 7963,
+      "sha256": "40d70faa6698d7499f20ed0f089dc70614fa955a2e80e513bd26968000ce5c61",
+      "change": "added"
+    },
+    {
+      "path": "tools/strat2g_validation.py",
+      "bytes": 7940,
+      "sha256": "5e228ca1fd4b183974f63e04a8b434a1b592979df1597af37ec02f767dee6ecb",
+      "change": "added"
+    },
+    {
+      "path": "tools/strat2h_validation.py",
+      "bytes": 10595,
+      "sha256": "ff76855ec97c74bd4c1f33a4ef54ddb04b445ef397f34bce9eab092c7eeedce3",
+      "change": "added"
+    },
+    {
+      "path": "tools/strat2i_validation.py",
+      "bytes": 11263,
+      "sha256": "c9665ab95007472b9754c2ebce1aaf631bb5439c1b608242ce214a264eb6d5a6",
+      "change": "added"
+    },
+    {
+      "path": "reports/publication/strat-2e-trade-execution-calendar-validation-v1.md",
+      "bytes": 29885,
+      "sha256": "a8c1caf485821a4357e591a4a0f881a3182fbdf9da32f14aef8dfffc03f08436",
+      "change": "added immutable-report reading copy"
+    }
+  ],
+  "files_count": 97,
+  "review": {
+    "embedded_secret_scan": "PASS; no credential/private-key/token literal candidates in92 original candidate files; final staged scan repeated before commit",
+    "source_size_bytes_before_closure_docs": 1090271,
+    "candidate_aliases": 0,
+    "raw_or_holdout_data_staged": false,
+    "line_endings": "narrow .gitattributes -text rules preserve original CRLF/LF and code/protocol fingerprints; cr-at-eol recognizes Windows line terminators without accepting trailing spaces/tabs",
+    "local_path_privacy": "Five original immutable reports contain user-supplied Windows workspace paths. These are operational paths, not credentials; retained intentionally to preserve evidence. New handoff includes explicitly requested worktree paths. No env/auth content read."
+  },
+  "validation": {
+    "pytest_modules": [
+      "tests/test_phase6_controller.py",
+      "tests/test_phase6_controller_resources.py",
+      "tests/test_phase6_execution.py",
+      "tests/test_phase6_features.py",
+      "tests/test_phase6_models.py",
+      "tests/test_phase6_runner.py",
+      "tests/test_phase6_signals.py",
+      "tests/test_phase6_startup.py",
+      "tests/test_phase6_streaming.py",
+      "tests/test_phase6_validation.py",
+      "tests/test_research.py",
+      "tests/test_research_diagnostics.py",
+      "tests/test_research_safety.py",
+      "tests/test_strat2c_stream_validation.py",
+      "tests/test_strat2c_validation_config.py",
+      "tests/test_strat2d.py",
+      "tests/test_strat2d_memory.py",
+      "tests/test_strat2d_resource_profile.py",
+      "tests/test_strat2e.py",
+      "tests/test_strat2e_postmortem.py",
+      "tests/test_strat2f.py",
+      "tests/test_strat2f_verify.py",
+      "tests/test_strat2g.py",
+      "tests/test_strat2g_resources.py",
+      "tests/test_strat2h.py",
+      "tests/test_strat2h_resources.py",
+      "tests/test_strat2i.py"
+    ],
+    "initial_run": {
+      "tests": 504,
+      "errors": 0,
+      "failures": 2,
+      "skipped": 0
+    },
+    "final_run": {
+      "tests": 504,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    "initial_failures": "Two pre-existing fixture/isolation defects: no-science assertion inspected a process already loaded by collection; admission fixture referenced real now-existing I output paths. Only tests were corrected; no frozen runtime algorithms changed.",
+    "pytest_final_seconds": 206.3,
+    "warnings": 625,
+    "known_warnings": "NumPy generic-timedelta deprecations; one existing runpy module-reimport warning",
+    "ruff_check": "PASS ?66 candidate Python files",
+    "ruff_format": "PASS ?66 candidate Python files",
+    "git_diff_check": "PASS for original code under CRLF-aware attributes; final cached check repeated after exporting the immutable doubled-CR report to a separate normalized reading copy.",
+    "artifacts": "2033 sealed C-I files checked against receipts/canonical states and saved file maps; no junction traversal or new historical execution",
+    "preserved_original_reports_configs": 26
+  },
+  "commands": {
+    "pytest": "$env:PYTHONPATH=\"$pwd\\src\"; $env:OMP_NUM_THREADS=\"1\"; $env:OPENBLAS_NUM_THREADS=\"1\"; $env:MKL_NUM_THREADS=\"1\"; $env:NUMEXPR_NUM_THREADS=\"1\"; $reviewTests=Get-Content .tmp/research-checkpoint-tests-v1.txt; ..\\AI-Trading-System\\.venv-research\\Scripts\\python.exe -B -m pytest @reviewTests -q -p no:cacheprovider --basetemp=.tmp/research-checkpoint-tests-v2 --junitxml=.tmp/research-checkpoint-tests-v2.xml",
+    "ruff": "reviewed66 explicit files; ruff check and ruff format --check",
+    "note": "Test output directories/XML already exist; use fresh versioned paths on rerun."
+  },
+  "deliberately_excluded": [
+    {
+      "path": "data/",
+      "reason": "Existing ignored raw market data, generated model/checkpoint/receipt/journal/evidence files; no raw files or immutable artifacts added. Named non-junction outputs inventoried by SHA-256 in artifact manifest; whole tree not recursively scanned."
+    },
+    {
+      "path": "data/research/phase5-v1",
+      "reason": "Ignored Windows junction; metadata-only attribute check. Target was not followed, scanned, staged, read or changed during closure."
+    },
+    {
+      "path": ".venv/ and .venv-research/",
+      "reason": "Ignored local environments; no dependencies installed."
+    },
+    {
+      "path": ".tmp/",
+      "reason": "Ignored synthetic test fixtures/XML, staging path list, audit receipts. No logs/temp state added."
+    },
+    {
+      "path": ".env, .env.*, secrets/, auth files, *.key/*.token",
+      "reason": "Existing ignore patterns preserved; secrets not read or staged."
+    },
+    {
+      "path": "__pycache__/, pytest/ruff caches, *.log, *.parquet, databases",
+      "reason": "Existing ignored generated content; no cache/data binaries added."
+    },
+    {
+      "path": "other worktrees and Git branches",
+      "reason": "No filesystem/source changes, checkout, reset, merge or rebase; shared metadata writes only for authorized current-branch staging/commit/upstream."
+    },
+    {
+      "path": "reports/strat-2e-trade-execution-calendar-validation-v1.md",
+      "reason": "Original immutable report retains131 doubled-CR line endings and remains untracked; normalized reading copy committed separately, both hashes recorded; no evidence rewritten."
+    }
+  ],
+  "research_conclusion": "Engineering PASS; independent predictive/economic value INCONCLUSIVE. No historical independent confirmation or neural model was implemented.",
+  "commit_subject": "feat(research): complete STRAT-2C to 2I pipeline and audit",
+  "receipt_location": ".tmp/research-checkpoint-final-receipt-v1.json (local SHA/remote verification, not committed to avoid self-reference)"
+}

@@ -145,13 +145,15 @@ def test_multiple_jobs_require_explicit_batch(configuration):
         controller.run_queue(configuration, "config.json", limit=2)
 
 
-def test_cli_resource_stop_precedes_science(monkeypatch):
+def test_cli_resource_stop_precedes_science(monkeypatch, tmp_path):
     from trading.research import safety
 
     monkeypatch.setattr(
         safety, "resources", lambda config: (_ for _ in ()).throw(ResearchSafetyStop("test floor"))
     )
-    monkeypatch.setattr(sys, "argv", ["phase6", "run"])
+    config = (controller.ROOT / "config/phase6a-research-v1.json").resolve()
+    monkeypatch.setattr(safety, "ROOT", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["phase6", "run", "--config", str(config)])
     before = set(sys.modules)
     with pytest.raises(SystemExit) as stopped:
         runpy.run_module("trading.research.phase6.runner", run_name="__main__")

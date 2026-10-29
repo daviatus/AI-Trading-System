@@ -1,0 +1,280 @@
+{
+  "audit": {
+    "digits": 5,
+    "duplicates": "exact adjacent duplicate and conflicting duplicate counters; reject all duplicates/out-of-order; no unbounded global set needed because strict monotonicity is required",
+    "gap_horizons": [
+      5,
+      15,
+      30
+    ],
+    "invalid_candles": "record and fail closed; never repair",
+    "jump_bps_warning": 20,
+    "minimum_feature_contiguous_age": 64,
+    "pip_position": 4,
+    "window_edges": "report leading/trailing omissions separately from internal gaps"
+  },
+  "budgets": {
+    "batch_rows": 1024,
+    "days": 64,
+    "groups": 256,
+    "minute_cells": 84960,
+    "transactions": 1000
+  },
+  "calendar": {
+    "evidence_fingerprint": "7c66edc0ac9ff95ad02c57e7fe3862ec9f482b2b716bdbf6b7524c7f605a562e",
+    "holidays": [],
+    "timezone": "America/New_York",
+    "uncertainties": [
+      "Weekly rules are current exposed metadata, not verified for 2022.",
+      "No verified 2022 holiday schedule supplied; later dated holidays are not applied retroactively.",
+      "Observed continuous data supports engineering checks only, not historical session claims."
+    ],
+    "verified": false,
+    "version": "eurusd-current-contract-hypothesis-v1",
+    "weekly_open_seconds": [
+      [
+        61260,
+        147540
+      ],
+      [
+        147660,
+        233940
+      ],
+      [
+        234060,
+        320340
+      ],
+      [
+        320460,
+        406740
+      ],
+      [
+        406860,
+        492900
+      ]
+    ]
+  },
+  "calendar_evidence": {
+    "broker_identity": "not attested in frozen preparation contract; do not infer from symbol or current generic FX hours",
+    "proposed_calendar_correction": null,
+    "review_date": "2026-10-29",
+    "sources": [
+      {
+        "supports": "UTC-minute open-tick timestamps, timezone-specific start-inclusive/end-exclusive intervals, Open API commission units, volume cents; not historical source schedules",
+        "url": "https://help.ctrader.com/open-api/model-messages/"
+      },
+      {
+        "supports": "US DST since 2007; January-February 2022 New York UTC-5 with no transition",
+        "url": "https://www.nist.gov/pml/time-and-frequency-division/popular-links/daylight-saving-time-dst"
+      },
+      {
+        "supports": "Dated generic broker notice uses platform GMT+2 and warns of intermittent holiday pricing; source account is not identified as this broker",
+        "url": "https://www.ic.com/blog/holiday-trading-schedule-dec-2021-jan-2022/"
+      }
+    ],
+    "status": "UNVERIFIED historical source-broker/account schedule; no correction applied",
+    "version": "strat2i-calendar-evidence-v1"
+  },
+  "costs": {
+    "account_currency": "USD scenario only; other currencies require causal verified conversion data",
+    "base_currency": "EUR",
+    "fee_status": "Reference0.6bps roundtrip is not broker-verified. Snapshot Open API type2 is USD per lot; preciseTradingCommissionRate300000000/1e8 implies USD3 per lot if applicable, lotSize10000000/100 is100000EUR. Legacy commission300 is not independently decoded. Historical applicability/charging side unverified.",
+    "pip": 0.0001,
+    "pipette": 1e-05,
+    "price_side": "UNKNOWN; midpoint interpretation is a conditional scenario only",
+    "quote_currency": "USD",
+    "scenarios": [
+      {
+        "commission_roundtrip_bps": 0.6,
+        "slippage_per_side_bps": 0,
+        "spread_bps": 0.5,
+        "total_bps": 1.1
+      },
+      {
+        "commission_roundtrip_bps": 0.6,
+        "slippage_per_side_bps": 0.25,
+        "spread_bps": 1,
+        "total_bps": 2.1
+      },
+      {
+        "commission_roundtrip_bps": 0.6,
+        "slippage_per_side_bps": 0.5,
+        "spread_bps": 1.5,
+        "total_bps": 3.1
+      },
+      {
+        "commission_roundtrip_bps": 0.6,
+        "slippage_per_side_bps": 1,
+        "spread_bps": 3,
+        "total_bps": 5.6
+      }
+    ],
+    "version": "strat2i-reference-costs-v1"
+  },
+  "decision_policy": "INCONCLUSIVE if calendar/price-side/cost attestation or dependence-aware economic evidence insufficient; FAIL for fatal integrity defects or established contradiction of claimed advantage; PASS never profitability",
+  "expected_reconciliation": {
+    "expected_open_missing_minutes": 378,
+    "internal_gaps": 301,
+    "internal_missing_minutes": 23516,
+    "out_of_session_rows": 16,
+    "rows": 58683
+  },
+  "frozen_H": {
+    "generation": 59,
+    "head_receipt_sha256": "8253b6f05c53d1255afe6fc2cb56b79cda832cfb50b88231dbf483f12543de4f",
+    "manifest_sha256": "d1f675566f1d3ffde0d35c1164ede6377ea4c5d545d8fe0f0a5ebe1a49c91c29",
+    "path": "data/research/strat2d-strat2g-strat2h-resumed-v2",
+    "saved_hashes": "data/research/strat2d-strat2g-strat2h-evidence-v2/resumed-hashes.json"
+  },
+  "frozen_candidate": {
+    "calibration_rows": 13428,
+    "candidate_sha256": "bc72d1443ecca6ca69040ef814c521e23077d45a12ebb4f4a7fe4b95b2c967a6",
+    "family": "linear12",
+    "generation": 59,
+    "horizon_minutes": 15,
+    "journal": "data/research/strat2d-strat2g-resumed-v2",
+    "log_temperature": 0.325014157440135,
+    "manifest_sha256": "547c3a16b7fb030f7daed32fbbffc5307d8bfa407881fe04786d169f18b9a491",
+    "model_schema": "strat2g-model-state-v1",
+    "protocol_sha256": "c0514b40d6802b9ed14293852882ca5e8213fdb377a588000786eee591c35dcb",
+    "receipt_sha256": "2bf8ddcc8f762dfacc4460845a04a68dbc88aea49073bcc1ec1d3dfb78503369",
+    "reference_sha256": "1b2469a07b0f62e6bc48e43585c1fa8002be3326bf205b7091aac8988f4ecc1b",
+    "selection_rule": {
+      "complexity_order": [
+        "reference8",
+        "linear12",
+        "interaction16"
+      ],
+      "freeze_before_evaluation": true,
+      "metric": "selection calibrated log loss",
+      "minimum_absolute_logloss_improvement": 0.005,
+      "minimum_observed_days": 5,
+      "minimum_rows": 1000,
+      "select_within_each_target_only": true
+    },
+    "spec": {
+      "features": [
+        "return_1_bps_div10",
+        "return_5_bps_div10",
+        "return_15_bps_div10",
+        "return_30_bps_div10",
+        "return_5_vol_normalized",
+        "sigma20_bps_div5",
+        "range_bps_div10",
+        "price_position20",
+        "mean_reversion20",
+        "completed_5m_return_div001",
+        "utc_time_sin",
+        "utc_time_cos"
+      ],
+      "kind": "online_softmax_v1",
+      "l2": 0.01,
+      "learning_rate": 0.003,
+      "scales": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "seed": 20261027,
+      "version": "strat2d-online-softmax-v1"
+    },
+    "state_sha256": "df5443bc0294aad82785a2f40b67ed6e81a382ac80041e99cc91c386de624926",
+    "target": "h15_cost",
+    "training_rows": 11675
+  },
+  "pip_histogram_edges": [
+    -20,
+    -10,
+    -5,
+    -2,
+    -1,
+    -0.5,
+    0,
+    0.5,
+    1,
+    2,
+    5,
+    10,
+    20
+  ],
+  "prepared": "data/research/phase6-strat2c-eurusd-2022-jan-feb-validation-v1/prepared-streams/1d06fff895ee69a12b38/EURUSD",
+  "purpose": "offline exploratory audit only; no model fitting, target selection, orders or new historical access",
+  "raw_parts": [
+    "cache/EURUSD/2022-01.parquet",
+    "cache/EURUSD/2022-02.parquet"
+  ],
+  "raw_source_junction": "data/research/phase5-v1",
+  "resource_profile": {
+    "path": "config/strat2h-eurusd-2022-offline-100-v1.json",
+    "reuse": "user-authorized I diagnostics using unchanged H monitor; dedicated strat2i namespace under required H path prefix",
+    "sha256": "0e5448acb08bfa038207439ded17dff95cc2283f14c1b965b15b746a85feff44"
+  },
+  "scope": {
+    "asset": "EURUSD",
+    "end_exclusive": "2022-03-01T00:00:00Z",
+    "start": "2022-01-01T00:00:00Z",
+    "timeframe_minutes": 1
+  },
+  "target_policy": {
+    "availability": "15 contiguous validated future bars, frozen H conservative calendar buffers and common30 path; uncertainty from unknown calendar remains",
+    "formula": "g=10000*(close[t+15]/open[t+1]-1); z=max(cost_bps,k*max(sigma20[t],1e-6)*sqrt(15)*10000); LONG if g>z, SHORT if g<-z, else FLAT",
+    "purging": "common30 end strictly before role right; 60-minute embargo for nontraining roles; no training in I",
+    "selection": "three definitions fixed by reference/stress/volatility theory before execution; no winner or model change; class counts descriptive only",
+    "version": "strat2i-future-target-design-v1"
+  },
+  "targets": [
+    {
+      "cost_bps": 2.1,
+      "horizon_minutes": 15,
+      "id": "cost15_reference",
+      "volatility_multiple": 0.0
+    },
+    {
+      "cost_bps": 3.1,
+      "horizon_minutes": 15,
+      "id": "cost15_stress",
+      "volatility_multiple": 0.0
+    },
+    {
+      "cost_bps": 2.1,
+      "horizon_minutes": 15,
+      "id": "cost15_volatility",
+      "volatility_multiple": 0.5
+    }
+  ],
+  "thresholds": [
+    0.3,
+    0.35,
+    0.4,
+    0.45,
+    0.5,
+    0.55
+  ],
+  "uncertainty": {
+    "block_days": [
+      2,
+      5
+    ],
+    "interval": "percentile 95%; exploratory, not selection-adjusted; nine G configurations previously examined",
+    "method": "paired circular observed-UTC-day block bootstrap; intraday overlaps stay together",
+    "minimum_observed_days": 10,
+    "minimum_signal_days": 5,
+    "replicates": 1000,
+    "seed": 20261028
+  },
+  "unchanged_protocols": {
+    "config/strat2g-protocol-v1.json": "c0514b40d6802b9ed14293852882ca5e8213fdb377a588000786eee591c35dcb",
+    "config/strat2h-confirmation-protocol-v1.json": "aafed48adcec00f1c19d70ec3968546d905e8a98e690c2ee215657add99be939",
+    "config/strat2h-diagnostics-protocol-v1.json": "25be0a4cd4b192831ab4734bcd49efb5c25d27c006f9a3303479733670760d93"
+  },
+  "version": "strat2i-data-quality-economic-research-v1"
+}

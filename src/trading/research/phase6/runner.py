@@ -4,6 +4,8 @@ import argparse
 import gc
 import json
 import os
+import re
+import uuid
 from dataclasses import replace
 from pathlib import Path
 
@@ -16,6 +18,7 @@ from trading.research.phase6.controller import (
     initialize,
     run_queue,
     source_manifest,
+    validate_command,
     validate_config,
     write_json,
 )
@@ -36,6 +39,7 @@ def protected_manifest():
 
 
 def audit(config):
+    validate_command(config, "audit")
     output, source = validate_config(config)
     baseline = protected_manifest()
     write_json(output / "protected-evidence.json", baseline, immutable=True)
@@ -131,6 +135,40 @@ def _window_mask(index, fold, window, embargo):
     )
 
 
+def prepare_job(config, job, *, batch_rows=8192, max_chunks=1):
+    """Opt-in resumable preparation; existing model/execution paths stay unchanged."""
+    output, source = validate_config(config)
+    resources(config)
+    from trading.research.phase6.features import FeatureSpec
+    from trading.research.phase6.labels import LabelSpec
+    from trading.research.phase6.streaming import prepare_stream
+
+    contracts = json.loads((source / "contracts.json").read_text(encoding="utf-8"))
+    result = {}
+    for asset in config["assets"]:
+        cost = config["costs"][asset]
+        label = LabelSpec(
+            **job["label"],
+            cost_bps=cost["spread_bps"]
+            + cost["commission_bps_roundtrip"]
+            + 2 * cost["slippage_bps_per_side"],
+        )
+        result[asset] = prepare_stream(
+            source,
+            output / "prepared-streams" / job["id"] / asset,
+            asset,
+            job["fold"]["train_start"],
+            job["fold"]["test_end"],
+            feature_spec=FeatureSpec(max_rows=config["max_rows_per_asset"]),
+            label_spec=label,
+            metadata=contracts[asset],
+            batch_rows=batch_rows,
+            guard=lambda: resources(config),
+            max_chunks=max_chunks,
+        )
+    return result
+
+
 def _selection_score(result, minimum):
     metrics = result.metrics
     if metrics.get("completed_trades", metrics.get("trades", 0)) < minimum:
@@ -142,6 +180,7 @@ def _selection_score(result, minimum):
 
 
 def execute_experiment(config, job, attempt, *, synthetic_bars=None, synthetic_contracts=None):
+    validate_command(config, "worker")
     resources(config)
     with controller_lock(ROOT / "data/research/phase6-control-v1", lock_name=".worker.lock"):
         try:
@@ -171,6 +210,7 @@ def execute_experiment(config, job, attempt, *, synthetic_bars=None, synthetic_c
 
 
 def _execute_experiment(config, job, attempt, *, synthetic_bars=None, synthetic_contracts=None):
+    validate_command(config, "worker")
     import importlib.metadata
 
     import numpy as np
@@ -582,6 +622,7 @@ def _execute_experiment(config, job, attempt, *, synthetic_bars=None, synthetic_
 
 def smoke(config, output):
     """Small deterministic end-to-end synthetic exercise; no historical model claims."""
+    validate_command(config, "smoke")
     import numpy as np
     import pandas as pd
 
@@ -645,19 +686,30 @@ def smoke(config, output):
     )
 
 
-def main(argv=None):
+def main(argv=None, *, _context=None):
+    context = {} if _context is None else _context
+    context["stage"] = "argument_parsing"
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["audit", "plan", "smoke", "run", "worker"])
+    parser.add_argument("command", choices=["audit", "plan", "smoke", "run", "worker", "prepare"])
     parser.add_argument("--config", default="config/phase6a-research-v1.json")
     parser.add_argument("--limit", type=int, default=1)
     parser.add_argument("--full-batch", action="store_true")
     parser.add_argument("--job-id")
     parser.add_argument("--attempt")
+    parser.add_argument("--batch-rows", type=int, default=8192)
+    parser.add_argument("--max-chunks", type=int, default=1)
     parser.add_argument("--smoke-output", default="data/research/phase6a-v1/smoke-v1")
     args = parser.parse_args(argv)
+    context.update(command=args.command, stage="configuration_load")
+    if args.job_id and re.fullmatch(r"[0-9a-f]{20}", args.job_id):
+        context["job_id"] = args.job_id
     config_path = (ROOT / args.config).resolve()
-    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config = json.loads(config_path.read_text(encoding="utf-8-sig"))
+    context["stage"] = "command_validation"
+    validate_command(config, args.command)
+    context["stage"] = "configuration_validation"
     output, _ = validate_config(config)
+    context["stage"] = "resource_guard"
     resources(config)
     for key in (
         "OMP_NUM_THREADS",
@@ -667,21 +719,49 @@ def main(argv=None):
     ):
         os.environ[key] = "1"
     if args.command == "audit":
+        context["stage"] = "audit"
         result = audit(config)
         print(f"AUDIT_COMPLETE protected_files={result['protected_files']}")
     elif args.command == "plan":
+        context["stage"] = "plan"
         _, jobs = initialize(config)
         print(f"PLAN_READY jobs={len(jobs)}; no training started")
     elif args.command == "run":
+        context["stage"] = "experiment_queue"
         result = run_queue(config, config_path, limit=args.limit, full_batch=args.full_batch)
         print(canonical(result))
+    elif args.command == "prepare":
+        context["stage"] = "preparation_job_selection"
+        jobs = {job["id"]: job for job in experiment_queue(config)}
+        if args.job_id not in jobs:
+            raise ValueError("Preparation requires an explicit registered --job-id")
+        context["stage"] = "preparation"
+        result = prepare_job(
+            config,
+            jobs[args.job_id],
+            batch_rows=args.batch_rows,
+            max_chunks=args.max_chunks,
+        )
+        print(
+            canonical(
+                {
+                    asset: {
+                        key: state[key]
+                        for key in ("complete", "rows_read", "rows_written", "gap_minutes")
+                    }
+                    for asset, state in result.items()
+                }
+            )
+        )
     elif args.command == "smoke":
+        context["stage"] = "smoke"
         target = (ROOT / args.smoke_output).resolve()
         if not target.is_relative_to(output):
             raise ValueError("Smoke outputs must stay within configured Phase6 directory")
         result = smoke(config, target)
         print(f"SYNTHETIC_SMOKE_COMPLETE accepted={result['accepted']}")
     elif args.command == "worker":
+        context["stage"] = "worker_validation"
         jobs = {job["id"]: job for job in experiment_queue(config)}
         if args.job_id not in jobs or not args.attempt:
             raise ValueError("Worker requires a registered experiment and attempt")
@@ -690,19 +770,106 @@ def main(argv=None):
             raise ValueError("Unregistered worker attempt directory")
         if json.loads((output / "code-manifest.json").read_text()) != code_manifest():
             raise ValueError("Code changed after registration")
+        context["stage"] = "worker_execution"
         execute_experiment(config, jobs[args.job_id], attempt)
     return 0
 
 
-if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except ResearchSafetyStop as error:
-        print(f"RESEARCH_SAFETY_STOP: {error}", flush=True)
-        raise SystemExit(2) from None
-    except Exception as error:
-        # Broker/DB secrets are never read; avoid exception payloads regardless.
-        print(
-            f"PHASE6_STOPPED {type(error).__name__}; inspect preserved attempt evidence", flush=True
+def _failure_record(error, context):
+    """Log controlled messages and code locations, never exception payloads/locals."""
+    public_messages = {
+        "Safety floors cannot be reduced",
+        "preparation_only must be a boolean",
+        "Preparation-only configuration permits only the prepare command",
+        "Only single-worker offline simulation is supported",
+        "Outputs require a separate versioned Phase 6 research directory",
+        "Research source/output overlap forbidden",
+        "Preparation requires an explicit registered --job-id",
+        "Development partition differs from frozen provenance",
+        "Snapshot path traversal",
+        "No registered development partitions",
+        "Streaming inputs/config/code changed; use a new output version",
+        "Research disk floor cannot be below 15 GiB",
+        "Research RAM minimum cannot be below 1.25 GiB",
+        "Research RAM minimum cannot be below 1.5 GiB",
+    }
+    message = str(error)
+    if message in public_messages or (
+        isinstance(error, ResearchSafetyStop)
+        and re.fullmatch(
+            r"(?:Windows free disk|Available RAM) [0-9]+\.[0-9]{2} GiB below research "
+            r"(?:floor|minimum)",
+            message,
         )
-        raise SystemExit(1) from None
+    ):
+        reason = message
+    elif isinstance(error, json.JSONDecodeError):
+        reason = "Invalid configuration JSON; check JSON syntax and UTF-8 encoding"
+    elif isinstance(error, FileNotFoundError):
+        reason = "A required file is missing; path omitted"
+    else:
+        reason = "Exception details suppressed; inspect the reported code location"
+    record = {
+        "schema_version": 1,
+        **context,
+        "exception_type": type(error).__name__,
+        "status": "safety_stopped" if isinstance(error, ResearchSafetyStop) else "failed",
+        "reason": reason,
+        "origin": None,
+    }
+    trace = error.__traceback__
+    root = ROOT.resolve()
+    while trace is not None:
+        filename = Path(trace.tb_frame.f_code.co_filename).resolve()
+        if filename.is_relative_to(root / "src"):
+            record["origin"] = {
+                "file": filename.relative_to(root).as_posix(),
+                "line": trace.tb_lineno,
+                "function": trace.tb_frame.f_code.co_name,
+            }
+        trace = trace.tb_next
+    return record
+
+
+def _report_failure(error, context):
+    record = _failure_record(error, context)
+    evidence = "unavailable"
+    try:
+        root = ROOT.resolve()
+        directory = (root / "data/research/phase6-cli-failures-v1").resolve()
+        if not directory.is_relative_to(root):
+            raise ValueError("Failure evidence directory escapes this worktree")
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"failure-{uuid.uuid4().hex}.json"
+        with path.open("x", encoding="utf-8", newline="\n") as handle:
+            handle.write(canonical(record) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        evidence = path.relative_to(root).as_posix()
+    except (OSError, ValueError):
+        pass  # The original failure must still be visible if the disk is unwritable.
+    origin = record["origin"]
+    location = f"{origin['file']}:{origin['line']}" if origin else "unavailable"
+    prefix = "RESEARCH_SAFETY_STOP" if isinstance(error, ResearchSafetyStop) else "PHASE6_STOPPED"
+    print(
+        f"{prefix} {record['exception_type']} stage={record['stage']} "
+        f"origin={location}; {record['reason']}; failure_report={evidence}",
+        flush=True,
+    )
+
+
+def cli(argv=None):
+    """Credential-safe CLI boundary, including failures before output initialization."""
+    context = {"stage": "argument_parsing"}
+    try:
+        return main(argv, _context=context)
+    except ResearchSafetyStop as error:
+        _report_failure(error, context)
+        return 2
+    except Exception as error:
+        _report_failure(error, context)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(cli())

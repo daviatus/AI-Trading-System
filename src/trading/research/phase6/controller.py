@@ -11,7 +11,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from trading.research.safety import ROOT, ResearchSafetyStop, resources
+from trading.research.safety import ROOT, ResearchSafetyStop, minimum_ram_floor_gib, resources
 
 HOLDOUT = "2026-01-01"
 
@@ -45,6 +45,8 @@ def validate_config(config):
     """Reject unsafe settings before scientific imports or filesystem mutation."""
     from datetime import UTC, datetime, timedelta
 
+    if type(config.get("preparation_only", False)) is not bool:
+        raise ValueError("preparation_only must be a boolean")
     output = (ROOT / config["output"]).resolve()
     source = (ROOT / config["source"]).resolve()
     research = (ROOT / "data/research").resolve()
@@ -54,8 +56,17 @@ def validate_config(config):
         raise ValueError("Research source/output overlap forbidden")
     if config.get("mode") != "offline_simulation" or config["threads"] != 1:
         raise ValueError("Only single-worker offline simulation is supported")
-    floors = ((config["free_floor_gib"], 15), (config["minimum_available_ram_gib"], 1.5))
-    if any(not math.isfinite(value) or value < floor for value, floor in floors):
+    floors = (
+        (config["free_floor_gib"], 15),
+        (config["minimum_available_ram_gib"], minimum_ram_floor_gib(config)),
+    )
+    if any(
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or not math.isfinite(value)
+        or value < floor
+        for value, floor in floors
+    ):
         raise ValueError("Safety floors cannot be reduced")
     worker_ram = config.get("max_worker_ram_gib", 1.0)
     if (
@@ -94,6 +105,12 @@ def validate_config(config):
         if values[-1] > cutoff or fold.get("holdout", False):
             raise ValueError("Previously inspected 2026 holdout is excluded from development")
     return output, source
+
+
+def validate_command(config, command):
+    """Keep preparation-only validation configs out of all experiment entrypoints."""
+    if config.get("preparation_only", False) and command != "prepare":
+        raise ValueError("Preparation-only configuration permits only the prepare command")
 
 
 def experiment_queue(config):
@@ -260,6 +277,7 @@ def _failure_evidence(attempt, entry):
 
 
 def initialize(config):
+    validate_command(config, "plan")
     output, _ = validate_config(config)
     resources(config)
     write_json(output / "config.json", config, immutable=True)
@@ -272,6 +290,7 @@ def initialize(config):
 
 
 def run_queue(config, config_path, *, limit=1, full_batch=False):
+    validate_command(config, "run")
     output, _ = validate_config(config)
     if limit < 1 or (limit > 1 and not full_batch):
         raise ValueError("Multiple iterations require explicit --full-batch initiation")

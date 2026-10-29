@@ -1,0 +1,132 @@
+{
+    "schema_version":  1,
+    "version":  "phase6-strat2c-eurusd-2022-jan-feb-validation-v1",
+    "mode":  "offline_simulation",
+    "output":  "data/research/phase6-strat2c-eurusd-2022-jan-feb-validation-v1",
+    "source":  "data/research/phase5-v1",
+    "assets":  [
+                   "EURUSD"
+               ],
+    "threads":  1,
+    "seed":  20261023,
+    "free_floor_gib":  15,
+    "minimum_available_ram_gib":  1.25,
+    "max_rows_per_asset":  400000,
+    "max_training_rows":  40000,
+    "max_calibration_rows":  10000,
+    "max_iterations":  16,
+    "timeout_seconds":  1800,
+    "max_worker_ram_gib":  1.0,
+    "max_diagnostic_bytes":  134217728,
+    "max_positions":  1,
+    "initial_equity":  10000,
+    "risk_fraction":  0.0025,
+    "leverage_scenarios":  [
+                               1,
+                               2,
+                               5,
+                               10,
+                               20,
+                               30
+                           ],
+    "selection_leverage":  1,
+    "instrument_leverage_caps":  {
+                                     "EURUSD":  30,
+                                     "XAUUSD":  20,
+                                     "WTI":  10
+                                 },
+    "cost_multipliers":  [
+                             1,
+                             2,
+                             3
+                         ],
+    "costs":  {
+                  "EURUSD":  {
+                                 "spread_bps":  1.0,
+                                 "slippage_bps_per_side":  0.25,
+                                 "commission_bps_roundtrip":  0.6,
+                                 "financing_bps_per_day":  1.0
+                             },
+                  "XAUUSD":  {
+                                 "spread_bps":  2.0,
+                                 "slippage_bps_per_side":  0.5,
+                                 "commission_bps_roundtrip":  0.7,
+                                 "financing_bps_per_day":  1.0
+                             },
+                  "WTI":  {
+                              "spread_bps":  4.0,
+                              "slippage_bps_per_side":  1.0,
+                              "commission_bps_roundtrip":  0.0,
+                              "financing_bps_per_day":  1.0
+                          }
+              },
+    "thresholds":  [
+                       0.45,
+                       0.55,
+                       0.65
+                   ],
+    "regime_filters":  [
+                           "all"
+                       ],
+    "stop_multiple":  2.0,
+    "reward_risk":  3.0,
+    "embargo_minutes":  60,
+    "minimum_tuning_trades":  30,
+    "minimum_full_year_trades":  100,
+    "profit_factor_target":  1.6,
+    "drawdown_ceiling":  0.1,
+    "models":  [
+                   {
+                       "kind":  "trend",
+                       "version":  "phase6a-v1"
+                   },
+                   {
+                       "kind":  "logistic",
+                       "version":  "phase6a-v1",
+                       "l2":  1.0
+                   },
+                   {
+                       "kind":  "xgboost",
+                       "version":  "phase6a-v1",
+                       "max_depth":  2,
+                       "n_estimators":  80,
+                       "learning_rate":  0.06
+                   },
+                   {
+                       "kind":  "tree",
+                       "version":  "phase6a-v1",
+                       "max_depth":  3
+                   }
+               ],
+    "labels":  [
+                   {
+                       "kind":  "barrier",
+                       "horizon_minutes":  15,
+                       "stop_multiple":  2.0,
+                       "reward_risk":  3.0
+                   },
+                   {
+                       "kind":  "volatility",
+                       "horizon_minutes":  60,
+                       "volatility_multiple":  1.0
+                   }
+               ],
+    "folds":  [
+                  {
+                      "name":  "streaming-validation-2022-jan-feb",
+                      "train_start":  "2022-01-01T00:00:00Z",
+                      "train_end":  "2022-01-15T00:00:00Z",
+                      "calibration_end":  "2022-02-01T00:00:00Z",
+                      "tuning_end":  "2022-02-15T00:00:00Z",
+                      "test_end":  "2022-03-01T00:00:00Z"
+                  }
+              ],
+    "evidence_limits":  [
+                            "All 2024/2025 evaluations are development evidence because these years were previously inspected.",
+                            "2026 candles are excluded; their inspected historical holdout results are not fresh validation.",
+                            "USD quote/unit contracts and leverage caps are explicit unverified scenarios, not broker permissions.",
+                            "Historical midpoint identity, bid/ask, spreads, financing, leverage tiers and schedules are unverified.",
+                            "Full 16-job batch requires explicit --full-batch invocation; default run starts one job only."
+                        ],
+    "preparation_only":  true
+}
